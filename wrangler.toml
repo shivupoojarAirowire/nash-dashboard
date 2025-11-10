@@ -1,5 +1,0 @@
-{
-  "$schema": "https://developers.cloudflare.com/pages/functions/wrangler-configuration/",
-  "compatibility_date": "2024-01-01",
-  "node_compat": true
-}

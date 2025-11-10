@@ -9,6 +9,7 @@ import AddStore from "./pages/AddStore";
 import Stores from "./pages/Stores";
 import Inventory from "./pages/Inventory";
 import InventoryPage from "./pages/InventoryPage";
+import Labelling from "./pages/Labelling";
 import Subscriptions from "./pages/Subscriptions";
 import Invoices from "./pages/Invoices";
 import Upload from "./pages/Upload";
@@ -20,6 +21,7 @@ import EngineerDeviceConfigurations from "./pages/EngineerDeviceConfigurations";
 import ProjectManagementDashboard from "./pages/ProjectManagementDashboard";
 import Users from "./pages/Users";
 import Documents from "./pages/Documents";
+import Vendors from "./pages/Vendors";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -39,6 +41,7 @@ const App = () => (
             <Route path="/stores/add" element={<AddStore />} />
             <Route path="/delivery" element={<Inventory />} />
             <Route path="/inventory" element={<InventoryPage />} />
+            <Route path="/labelling" element={<Labelling />} />
             <Route path="/subscriptions" element={<Subscriptions />} />
             <Route path="/invoices" element={<Invoices />} />
             <Route path="/upload" element={<Upload />} />
@@ -50,6 +53,7 @@ const App = () => (
             <Route path="/engineering/device-configurations" element={<EngineerDeviceConfigurations />} />
             <Route path="/users" element={<Users />} />
             <Route path="/documents" element={<Documents />} />
+            <Route path="/vendors" element={<Vendors />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

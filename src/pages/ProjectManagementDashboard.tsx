@@ -48,13 +48,14 @@ export default function ProjectManagementDashboard() {
     loadProjects();
   }, []);
 
-  const getProjectStatus = (siteStatus: string, devicesCount: number): ProjectStatus => {
+  const getProjectStatus = (siteStatus: string, devicesCount: number, configStatus: string, labelingDone: boolean): ProjectStatus => {
     if (siteStatus === 'Pending') return 'Heatmap Received';
     if (siteStatus === 'In Progress') return 'Sent to Engineer';
     if (siteStatus === 'Done' && devicesCount === 0) return 'Device Allocated';
-    if (siteStatus === 'Done' && devicesCount > 0) return 'Configuration Complete';
-    // For now, we'll use device count as proxy for later stages
-    // You can add more fields to site_assignments table for labeling_done, shipping_ready flags
+    if (siteStatus === 'Done' && devicesCount > 0 && configStatus !== 'Completed') return 'Device Allocated';
+    if (configStatus === 'Completed' && !labelingDone) return 'Configuration Complete';
+    if (configStatus === 'Completed' && labelingDone) return 'Labeling Done';
+    // Ready for Shipping status can be added later with additional field
     return 'Device Allocated';
   };
 
@@ -65,7 +66,7 @@ export default function ProjectManagementDashboard() {
       // Load site assignments
       const { data: assignments, error: assignError } = await supabase
         .from('site_assignments')
-        .select('id, city, store_id, store_code, assigned_to, status, deadline_at, created_at')
+        .select('id, city, store_id, store_code, assigned_to, status, deadline_at, created_at, config_status, labeling_done')
         .order('created_at', { ascending: false });
 
       if (assignError) throw assignError;
@@ -107,7 +108,12 @@ export default function ProjectManagementDashboard() {
           i.site === a.store_code && i.in_use
         ).length;
 
-        const status = getProjectStatus(a.status, allocatedDevices);
+        const status = getProjectStatus(
+          a.status, 
+          allocatedDevices, 
+          a.config_status || 'Not Started', 
+          !!a.labeling_done
+        );
 
         return {
           id: a.id,
