@@ -14,16 +14,11 @@ import type { Database } from "@/integrations/supabase/types";
 type UserType = "airowire" | "vendor" | "customer";
 
 const getAuthSchema = (userType: UserType) => {
-  const baseSchema = {
-    password: z.string().min(6, { message: "Password must be at least 6 characters" }).max(72),
-    fullName: z.string().trim().min(1, "Full name is required").max(100),
-    phone: z.string().trim().min(10, "Phone number is required"),
-    address: z.string().trim().min(5, "Address is required"),
-  };
-
   if (userType === "airowire") {
     return z.object({
-      ...baseSchema,
+      password: z.string().min(6, { message: "Password must be at least 6 characters" }).max(72),
+      fullName: z.string().trim().min(1, "Full name is required").max(100),
+      phone: z.string().trim().min(10, "Phone number is required"),
       email: z.string().trim().email({ message: "Invalid email address" }).max(255)
         .refine((email) => email.endsWith("@airowire.com"), {
           message: "Airowire users must use @airowire.com email",
@@ -32,7 +27,10 @@ const getAuthSchema = (userType: UserType) => {
     });
   } else {
     return z.object({
-      ...baseSchema,
+      password: z.string().min(6, { message: "Password must be at least 6 characters" }).max(72),
+      fullName: z.string().trim().min(1, "Full name is required").max(100),
+      phone: z.string().trim().min(10, "Phone number is required"),
+      address: z.string().trim().min(5, "Address is required"),
       email: z.string().trim().email({ message: "Invalid email address" }).max(255),
     });
   }
@@ -124,8 +122,7 @@ export default function Auth() {
           password,
           fullName,
           phone,
-          address,
-          ...(userType === "airowire" ? { department } : {}),
+          ...(userType === "airowire" ? { department } : { address }),
         });
 
         const redirectUrl = `${window.location.origin}/`;
@@ -143,7 +140,7 @@ export default function Auth() {
             data: {
               full_name: validatedData.fullName,
               phone: validatedData.phone,
-              address: validatedData.address,
+              address: userType === "airowire" ? null : (validatedData as any).address,
               department: userType === "airowire" ? (validatedData as any).department : null,
               user_type: userType,
               role: userRole, // Pass the role to the trigger
@@ -317,18 +314,20 @@ export default function Auth() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="address">Address *</Label>
-                  <Input
-                    id="address"
-                    type="text"
-                    placeholder="123 Main St, City, State"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
-                </div>
+                {userType !== "airowire" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="address">Address *</Label>
+                    <Input
+                      id="address"
+                      type="text"
+                      placeholder="123 Main St, City, State"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                )}
 
                 {userType === "airowire" && (
                   <div className="space-y-2">
