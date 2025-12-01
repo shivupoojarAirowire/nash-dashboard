@@ -7,7 +7,7 @@ import { Layout } from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import AddStore from "./pages/AddStore";
 import Stores from "./pages/Stores";
-import Inventory from "./pages/Inventory";
+import Delivery from "./pages/Delivery";
 import InventoryPage from "./pages/InventoryPage";
 import Labelling from "./pages/Labelling";
 import Subscriptions from "./pages/Subscriptions";
@@ -22,8 +22,13 @@ import ProjectManagementDashboard from "./pages/ProjectManagementDashboard";
 import Users from "./pages/Users";
 import Documents from "./pages/Documents";
 import Vendors from "./pages/Vendors";
+import ISPManagement from "./pages/ISPManagement";
+import ProjectOperations from "./pages/ProjectOperations";
+import NetworkOperations from "./pages/NetworkOperations";
+import Reports from "./pages/Reports";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import UserProfile from "./pages/UserProfile";
 
 const queryClient = new QueryClient();
 
@@ -39,7 +44,8 @@ const App = () => (
             <Route path="/" element={<Dashboard />} />
             <Route path="/stores" element={<Stores />} />
             <Route path="/stores/add" element={<AddStore />} />
-            <Route path="/delivery" element={<Inventory />} />
+            <Route path="/add-store" element={<AddStore />} />
+            <Route path="/delivery" element={<Delivery />} />
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/labelling" element={<Labelling />} />
             <Route path="/subscriptions" element={<Subscriptions />} />
@@ -54,6 +60,11 @@ const App = () => (
             <Route path="/users" element={<Users />} />
             <Route path="/documents" element={<Documents />} />
             <Route path="/vendors" element={<Vendors />} />
+            <Route path="/isp-management" element={<ISPManagement />} />
+            <Route path="/project-operations" element={<ProjectOperations />} />
+            <Route path="/network-operations" element={<NetworkOperations />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/profile" element={<UserProfile />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { listFeatureCatalog, getUserFeatureFlags, upsertUserFeatureFlags } from "@/integrations/supabase/features";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 export function FeatureManagement() {
   const [users, setUsers] = useState<{ id: string; email: string; full_name: string | null }[]>([]);
@@ -17,6 +18,7 @@ export function FeatureManagement() {
   const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -104,12 +106,23 @@ export function FeatureManagement() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Per-User Feature Management</CardTitle>
-        <CardDescription>Assign tab visibility per user</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Card>
+        <CollapsibleTrigger asChild>
+          <CardHeader className="cursor-pointer hover:bg-accent/50 transition-colors">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Per-User Feature Management</CardTitle>
+                <CardDescription>Assign tab visibility per user</CardDescription>
+              </div>
+              <ChevronDown 
+                className={`h-5 w-5 transition-transform duration-200 ${isOpen ? 'transform rotate-180' : ''}`}
+              />
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent>
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Search User</Label>
@@ -173,7 +186,9 @@ export function FeatureManagement() {
             ))}
           </div>
         </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }

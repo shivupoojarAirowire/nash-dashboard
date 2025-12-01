@@ -176,44 +176,51 @@ export default function DeviceConfigurations() {
 
   const saveConfiguration = async () => {
     if (!selectedSite) return;
+    
+    // Validate required fields
+    if (!selectedEngineer) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select an engineer',
+        variant: 'destructive'
+      });
+      return;
+    }
+    if (!deadline) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please set a deadline',
+        variant: 'destructive'
+      });
+      return;
+    }
+    
     try {
-      // Update engineer & deadline if provided
-      if (selectedEngineer || deadline) {
-        const updatePayload: any = {};
-        if (selectedEngineer) updatePayload.assigned_to = selectedEngineer;
-        if (deadline) updatePayload.deadline_at = new Date(deadline).toISOString();
-        if (Object.keys(updatePayload).length) {
-          const { error: updErr } = await supabase
-            .from('site_assignments')
-            .update(updatePayload)
-            .eq('id', selectedSite.id);
-          if (updErr) throw updErr;
-        }
-      }
-
-      // Allocate selected devices
-      const selectedSerials = Object.entries(deviceSelections)
-        .filter(([, v]) => v)
-        .map(([serial]) => serial);
-      for (const serial of selectedSerials) {
-        await supabase
-          .from('inventory')
-          .update({ in_use: true, site: selectedSite.store_code, assigned_date: new Date().toISOString().split('T')[0] })
-          .eq('serial', serial);
-      }
+      // Update engineer & deadline
+      const { error: updErr } = await supabase
+        .from('site_assignments')
+        .update({
+          assigned_to: selectedEngineer,
+          deadline_at: new Date(deadline).toISOString()
+        })
+        .eq('id', selectedSite.id);
+      
+      if (updErr) throw updErr;
 
       toast({
-        title: 'Configuration Saved',
-        description: `Engineer and ${selectedSerials.length} devices assigned to site ${selectedSite.store_code}`,
+        title: 'Assignment Saved',
+        description: `Engineer assigned to site ${selectedSite.store_code}`,
       });
       setDialogOpen(false);
       await loadSites();
-      await loadInventory();
+      
+      // Navigate to the engineer's device configurations page
+      navigate('/engineering/device-configurations');
     } catch (e) {
       console.error('saveConfiguration error', e);
       toast({
         title: 'Error',
-        description: 'Failed to save configuration. Please retry.',
+        description: 'Failed to save assignment. Please retry.',
         variant: 'destructive'
       });
     }
@@ -253,12 +260,11 @@ export default function DeviceConfigurations() {
               <TableRow>
                 <TableHead>City</TableHead>
                 <TableHead>Site Code</TableHead>
+                <TableHead>APs Needed</TableHead>
                 <TableHead>Devices Allocated</TableHead>
                 <TableHead>Allocated Devices</TableHead>
                 <TableHead>Engineer</TableHead>
                 <TableHead>Config Status</TableHead>
-                <TableHead>Firewall IP</TableHead>
-                <TableHead>Zonal Port</TableHead>
                 <TableHead>Deadline</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -268,9 +274,28 @@ export default function DeviceConfigurations() {
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">{s.city}</TableCell>
                   <TableCell>{s.store_code}</TableCell>
+                  <TableCell>
+                    {s.aps_needed !== null ? (
+                      <Badge variant="outline">{s.aps_needed}</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
                   <TableCell>{s.devicesAllocated}</TableCell>
                   <TableCell>
-                    {s.devicesAllocated > 0 ? (
+                    {s.config_status === 'Completed' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setViewingConfig(s);
+                          setViewConfigDialogOpen(true);
+                        }}
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                    ) : s.devicesAllocated > 0 ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -283,7 +308,12 @@ export default function DeviceConfigurations() {
                         View
                       </Button>
                     ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
+                      <Button
+                        size="sm"
+                        onClick={() => openDialogForSite(s)}
+                      >
+                        Assign
+                      </Button>
                     )}
                   </TableCell>
                   <TableCell>{engineers.find((e) => e.id === s.assigned_to)?.email || '-'}</TableCell>
@@ -299,12 +329,6 @@ export default function DeviceConfigurations() {
                     >
                       {s.config_status || 'Not Started'}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {s.firewall_ip || '-'}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {s.zonal_port_number || '-'}
                   </TableCell>
                   <TableCell>{s.deadline_at ? s.deadline_at.split('T')[0] : '-'}</TableCell>
                   <TableCell>
@@ -325,7 +349,7 @@ export default function DeviceConfigurations() {
                         size="sm"
                         onClick={() => openDialogForSite(s)}
                       >
-                        Assign
+                        {s.assigned_to ? 'Reassign' : 'Assign'}
                       </Button>
                     )}
                   </TableCell>
@@ -346,7 +370,7 @@ export default function DeviceConfigurations() {
           {selectedSite && (
             <div className="space-y-6">
               {/* Engineer & Deadline */}
-              <div className="grid md:grid-cols-3 gap-4">
+              <div className="grid md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-sm font-medium">Engineer</label>
                   <select
@@ -369,65 +393,11 @@ export default function DeviceConfigurations() {
                     onChange={(e) => setDeadline(e.target.value)}
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium">Currently Allocated</label>
-                  <div className="text-sm">{selectedSite.devicesAllocated} devices</div>
-                </div>
               </div>
-
-              {/* Device allocation tables with APs Needed mapping */}
-              {(['Router','Switch','Firewall','Access Point'] as InventoryItem['type'][]).map((type) => {
-                const devices = availableDevicesByType(type);
-                // For Access Point, show needed count and selected count
-                const isAP = type === 'Access Point';
-                const apsNeeded = isAP ? selectedSite.aps_needed ?? 0 : undefined;
-                const selectedAPs = isAP ? Object.entries(deviceSelections).filter(([serial, sel]) => sel && devices.some(d => d.serial === serial)).length : undefined;
-                return (
-                  <div key={type} className="space-y-2">
-                    <h3 className="font-semibold text-sm flex items-center gap-2">
-                      <Wrench className="h-4 w-4" /> {type}s <span className="text-xs text-muted-foreground">(Available: {devices.length})</span>
-                      {isAP && (
-                        <span className="ml-2 text-xs font-semibold text-primary">Needed: {apsNeeded} | Selected: {selectedAPs}</span>
-                      )}
-                    </h3>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-12"></TableHead>
-                          <TableHead>Make</TableHead>
-                          <TableHead>Serial</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {devices.map((d) => (
-                          <TableRow key={d.serial}>
-                            <TableCell>
-                              <input
-                                type="checkbox"
-                                className="w-4 h-4"
-                                checked={!!deviceSelections[d.serial]}
-                                onChange={() => toggleDeviceSelection(d.serial)}
-                                disabled={isAP && apsNeeded > 0 && selectedAPs >= apsNeeded && !deviceSelections[d.serial]}
-                              />
-                            </TableCell>
-                            <TableCell>{d.make}</TableCell>
-                            <TableCell className="font-mono text-xs">{d.serial}</TableCell>
-                          </TableRow>
-                        ))}
-                        {devices.length === 0 && (
-                          <TableRow>
-                            <TableCell colSpan={3} className="text-xs text-muted-foreground">No available {type.toLowerCase()}s.</TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                );
-              })}
 
               <div className="flex justify-end gap-2 pt-4">
                 <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-                <Button onClick={saveConfiguration}>Save Configuration</Button>
+                <Button onClick={saveConfiguration}>Save Assignment</Button>
               </div>
             </div>
           )}

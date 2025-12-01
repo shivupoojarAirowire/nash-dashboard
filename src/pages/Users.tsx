@@ -32,10 +32,12 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { User, Users as UsersIcon } from "lucide-react";
+import { User, Users as UsersIcon, Pencil, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { FeatureManagement } from "@/components/FeatureManagement";
 import { getUserFeatureFlags } from "@/integrations/supabase/features";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface UserProfile {
   id: string;
@@ -51,6 +53,8 @@ export default function Users() {
   const [loading, setLoading] = useState(true);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editUser, setEditUser] = useState<UserProfile | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
@@ -60,9 +64,16 @@ export default function Users() {
   const [fullName, setFullName] = useState("");
   const [department, setDepartment] = useState("");
   const [enabled, setEnabled] = useState(true);
-  const appRoles = ["admin", "manager", "user", "department"] as const;
-  type SelectedRole = typeof appRoles[number];
+  
+  // Define internal and external roles
+  const internalRoles = ["admin", "manager", "user"] as const;
+  const externalRoles = ["vendor", "customer", "isp-vendor"] as const;
+  type InternalRole = typeof internalRoles[number];
+  type ExternalRole = typeof externalRoles[number];
+  type SelectedRole = InternalRole | ExternalRole;
+  
   const [selectedRoles, setSelectedRoles] = useState<SelectedRole[]>(["user"]);
+  const [activeTab, setActiveTab] = useState<"internal" | "external">("internal");
 
   useEffect(() => {
     loadUsers();
@@ -226,6 +237,56 @@ export default function Users() {
     setSelectedRoles((user.roles && user.roles.length ? user.roles : ["user"]) as SelectedRole[]);
   }
 
+  function handleDeleteClick(user: UserProfile) {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!userToDelete) return;
+    
+    try {
+      setLoading(true);
+      
+      // Delete user roles first (due to foreign key)
+      const { error: rolesError } = await supabase
+        .from('user_roles')
+        .delete()
+        .eq('user_id', userToDelete.id);
+      
+      if (rolesError) throw rolesError;
+      
+      // Delete from profiles
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userToDelete.id);
+      
+      if (profileError) throw profileError;
+      
+      // Note: Deleting from auth.users requires admin API or service role
+      // This may need to be done via Edge Function or RPC
+      
+      toast({
+        title: "Success",
+        description: `User ${userToDelete.email} has been deleted`,
+      });
+      
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      await loadUsers();
+    } catch (error: any) {
+      console.error('Error deleting user:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete user",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Access + feature flag gate
   useEffect(() => {
     async function gate() {
@@ -273,61 +334,154 @@ export default function Users() {
       {/* Feature Management Section */}
       <FeatureManagement />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All Users</CardTitle>
-          <CardDescription>View and manage user accounts</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Department</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      {user.full_name || "Unnamed"}
-                    </div>
-                  </TableCell>
-                  <TableCell>{user.email}</TableCell>
-                  <TableCell>{user.department || "-"}</TableCell>
-                  <TableCell>
-                    {user.roles.map(role => (
-                      <Badge key={role} variant="secondary" className="mr-1">
-                        {role}
-                      </Badge>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "internal" | "external")} className="w-full">
+        <TabsList className="w-full justify-start">
+          <TabsTrigger value="internal">Internal Users</TabsTrigger>
+          <TabsTrigger value="external">External Users</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="internal">
+          <Card>
+            <CardHeader>
+              <CardTitle>Internal Users</CardTitle>
+              <CardDescription>Manage internal staff (Admin, Manager, User)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users
+                    .filter((user) => user.roles.some((r) => internalRoles.includes(r as InternalRole)))
+                    .map((user) => (
+                      <TableRow key={user.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            {user.full_name || "Unnamed"}
+                          </div>
+                        </TableCell>
+                        <TableCell>{user.email}</TableCell>
+                        <TableCell>{user.department || "-"}</TableCell>
+                        <TableCell>
+                          {user.roles.map((role) => (
+                            <Badge key={role} variant="secondary" className="mr-1">
+                              {role}
+                            </Badge>
+                          ))}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={user.enabled ? "default" : "destructive"}>
+                            {user.enabled ? "Active" : "Disabled"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditClick(user)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteClick(user)}
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={user.enabled ? "default" : "destructive"}>
-                      {user.enabled ? "Active" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleEditClick(user)}
-                    >
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="external">
+          <Card>
+            <CardHeader>
+              <CardTitle>External Users</CardTitle>
+              <CardDescription>Manage external users (Vendor, Customer, ISP-Vendor)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users
+                    .filter((user) => user.roles.some((r) => externalRoles.includes(r as ExternalRole)))
+                    .map((user) => (
+                      <TableRow key={user.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            {user.full_name || "Unnamed"}
+                          </div>
+                        </TableCell>
+                        <TableCell>{user.email}</TableCell>
+                        <TableCell>{user.department || "-"}</TableCell>
+                        <TableCell>
+                          {user.roles.map((role) => (
+                            <Badge key={role} variant="outline" className="mr-1">
+                              {role.replace('-', ' ')}
+                            </Badge>
+                          ))}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={user.enabled ? "default" : "destructive"}>
+                            {user.enabled ? "Active" : "Disabled"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditClick(user)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteClick(user)}
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent>
@@ -359,16 +513,23 @@ export default function Users() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="department">Department</Label>
-              <Input
-                id="department"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-              />
+              <Select value={department} onValueChange={setDepartment}>
+                <SelectTrigger id="department">
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PMO">PMO</SelectItem>
+                  <SelectItem value="Vendor">Vendor</SelectItem>
+                  <SelectItem value="Operations">Operations</SelectItem>
+                  <SelectItem value="Finance">Finance</SelectItem>
+                  <SelectItem value="Management">Management</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Roles</Label>
               <div className="grid grid-cols-2 gap-2">
-                {appRoles.map((role) => (
+                {[...internalRoles, ...externalRoles].map((role) => (
                   <label key={role} className="flex items-center space-x-2">
                     <Checkbox
                       checked={selectedRoles.includes(role)}
@@ -380,7 +541,7 @@ export default function Users() {
                         );
                       }}
                     />
-                    <span className="capitalize">{role}</span>
+                    <span className="capitalize">{role.replace('-', ' ')}</span>
                   </label>
                 ))}
               </div>
@@ -441,16 +602,23 @@ export default function Users() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="department">Department</Label>
-              <Input
-                id="department"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-              />
+              <Select value={department} onValueChange={setDepartment}>
+                <SelectTrigger id="department">
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PMO">PMO</SelectItem>
+                  <SelectItem value="Vendor">Vendor</SelectItem>
+                  <SelectItem value="Operations">Operations</SelectItem>
+                  <SelectItem value="Finance">Finance</SelectItem>
+                  <SelectItem value="Management">Management</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Roles</Label>
               <div className="grid grid-cols-2 gap-2">
-                {appRoles.map((role) => (
+                {[...internalRoles, ...externalRoles].map((role) => (
                   <label key={role} className="flex items-center space-x-2">
                     <Checkbox
                       checked={selectedRoles.includes(role)}
@@ -462,7 +630,7 @@ export default function Users() {
                         );
                       }}
                     />
-                    <span className="capitalize">{role}</span>
+                    <span className="capitalize">{role.replace('-', ' ')}</span>
                   </label>
                 ))}
               </div>
@@ -493,6 +661,30 @@ export default function Users() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the user account for{' '}
+              <span className="font-semibold">{userToDelete?.email}</span> and remove all associated data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setUserToDelete(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDelete} 
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete User
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -23,6 +23,9 @@ interface AssignmentRow {
   aps_needed: number | null;
   remarks: string | null;
   completed_at: string | null;
+  floors?: number | null;
+  floor_size?: string | null;
+  heatmap_files?: string[] | null;
 }
 
 export default function MyHeatmaps() {
@@ -38,6 +41,10 @@ export default function MyHeatmaps() {
   const [loading, setLoading] = useState(false);
   const [storeNames, setStoreNames] = useState<Record<string, string>>({});
   const [assignerNames, setAssignerNames] = useState<Record<string, string>>({});
+  // Completion fields
+  const [completeFiles, setCompleteFiles] = useState<File[]>([]);
+  const [floors, setFloors] = useState<string>('');
+  const [floorSize, setFloorSize] = useState<string>('');
 
   useEffect(() => {
     loadData();
@@ -98,7 +105,7 @@ export default function MyHeatmaps() {
       if (!userId) return;
       const { data, error } = await supabase
         .from('site_assignments')
-        .select('id, city, store_id, store_code, floor_map_url, deadline_at, status, assigned_by, aps_needed, remarks, completed_at')
+        .select('id, city, store_id, store_code, floor_map_url, deadline_at, status, assigned_by, aps_needed, remarks, completed_at, floors, floor_size, heatmap_files')
         .eq('assigned_to', userId)
         .order('deadline_at', { ascending: true });
       if (error) throw error;
@@ -154,19 +161,63 @@ export default function MyHeatmaps() {
     setActiveAssignment(row);
     setApsNeeded(row.aps_needed != null ? String(row.aps_needed) : '');
     setRemarks(row.remarks || '');
+    setFloors(row.floors != null ? String(row.floors) : '');
+    setFloorSize(row.floor_size || '');
+    setCompleteFiles([]);
     setCompletionOpen(true);
   }
 
   async function handleComplete(e: React.FormEvent) {
     e.preventDefault();
     if (!activeAssignment) return;
+    
+    // Validate required fields
+    if (!apsNeeded.trim()) {
+      toast({ title: 'Validation Error', description: 'APs Needed is required', variant: 'destructive' });
+      return;
+    }
+    if (completeFiles.length === 0) {
+      toast({ title: 'Validation Error', description: 'At least one heatmap file is required', variant: 'destructive' });
+      return;
+    }
+    if (!floors.trim()) {
+      toast({ title: 'Validation Error', description: 'No. of Floors is required', variant: 'destructive' });
+      return;
+    }
+    if (!floorSize.trim()) {
+      toast({ title: 'Validation Error', description: 'Floor Size is required', variant: 'destructive' });
+      return;
+    }
+    
     setSaving(true);
     try {
+      // Upload created heatmaps if provided
+      let uploadedUrls: string[] = [];
+      if (completeFiles.length > 0) {
+        for (const file of completeFiles) {
+          const ext = file.name.split('.').pop();
+          const safeCode = (activeAssignment.store_code || 'site').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const fileName = `${safeCode}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+          const path = `${activeAssignment.id}/${fileName}`;
+          const { error: upErr } = await supabase.storage
+            .from('heatmaps')
+            .upload(path, file);
+          if (upErr) throw upErr;
+          const { data: { publicUrl } } = supabase.storage
+            .from('heatmaps')
+            .getPublicUrl(path);
+          uploadedUrls.push(publicUrl);
+        }
+      }
+
       const updates: any = {
         status: 'Done',
         completed_at: new Date().toISOString(),
+        aps_needed: Number(apsNeeded),
+        floors: Number(floors),
+        floor_size: floorSize.trim(),
+        heatmap_files: uploadedUrls,
       };
-      if (apsNeeded.trim() !== '') updates.aps_needed = Number(apsNeeded);
       if (remarks.trim() !== '') updates.remarks = remarks.trim();
       const { error } = await supabase
         .from('site_assignments')
@@ -178,6 +229,9 @@ export default function MyHeatmaps() {
       setActiveAssignment(null);
       setApsNeeded('');
       setRemarks('');
+      setFloors('');
+      setFloorSize('');
+      setCompleteFiles([]);
       loadData();
     } catch (err: any) {
       toast({ title: 'Completion Failed', description: err.message, variant: 'destructive' });
@@ -287,8 +341,25 @@ export default function MyHeatmaps() {
           </DialogHeader>
           <form onSubmit={handleComplete} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="aps_needed">APs Needed (optional)</Label>
-              <Input id="aps_needed" type="number" min={0} value={apsNeeded} onChange={e => setApsNeeded(e.target.value)} placeholder="e.g. 12" />
+              <Label>Heatmap Files (multiple) <span className="text-red-500">*</span></Label>
+              <Input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.zip" onChange={(e) => setCompleteFiles(Array.from(e.target.files || []))} required />
+              {completeFiles.length > 0 && (
+                <p className="text-xs text-muted-foreground">{completeFiles.length} file(s) selected</p>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label>No. of Floors <span className="text-red-500">*</span></Label>
+                <Input type="number" min={0} value={floors} onChange={e => setFloors(e.target.value)} placeholder="e.g. 3" required />
+              </div>
+              <div className="space-y-1">
+                <Label>Floor Size <span className="text-red-500">*</span></Label>
+                <Input value={floorSize} onChange={e => setFloorSize(e.target.value)} placeholder="e.g. 12,000 sqft" required />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="aps_needed">APs Needed <span className="text-red-500">*</span></Label>
+              <Input id="aps_needed" type="number" min={0} value={apsNeeded} onChange={e => setApsNeeded(e.target.value)} placeholder="e.g. 12" required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="remarks">Remarks (optional)</Label>

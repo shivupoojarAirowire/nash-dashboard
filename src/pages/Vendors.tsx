@@ -13,10 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Truck, CheckCircle2, Clock, DollarSign, Plus, Edit, Package } from "lucide-react";
+import { Truck, CheckCircle2, Clock, DollarSign, Plus, Edit, Package, Trash2, Phone, Mail, MapPin } from "lucide-react";
 
 type Vendor = {
   id: string;
+  vendor_id: string;
   name: string;
   company: string;
   email: string;
@@ -68,6 +69,11 @@ export default function Vendors() {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<VendorTask | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [vendorDetailsOpen, setVendorDetailsOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [vendorToDelete, setVendorToDelete] = useState<Vendor | null>(null);
 
   // Form states
   const [vendorForm, setVendorForm] = useState({
@@ -138,18 +144,36 @@ export default function Vendors() {
 
   const handleAddVendor = async () => {
     try {
-      const { error } = await supabase
-        .from('vendors')
-        .insert([vendorForm]);
+      if (isEditMode && selectedVendor) {
+        // Update existing vendor
+        const { error } = await supabase
+          .from('vendors')
+          .update(vendorForm)
+          .eq('id', selectedVendor.id);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      toast({
-        title: "Vendor Added",
-        description: "Vendor has been registered successfully.",
-      });
+        toast({
+          title: "Vendor Updated",
+          description: "Vendor details have been updated successfully.",
+        });
+      } else {
+        // Insert new vendor
+        const { error } = await supabase
+          .from('vendors')
+          .insert([vendorForm]);
+
+        if (error) throw error;
+
+        toast({
+          title: "Vendor Added",
+          description: "Vendor has been registered successfully.",
+        });
+      }
 
       setVendorDialogOpen(false);
+      setIsEditMode(false);
+      setSelectedVendor(null);
       setVendorForm({
         name: '',
         company: '',
@@ -166,10 +190,63 @@ export default function Vendors() {
       console.error('handleAddVendor error', e);
       toast({
         title: "Error",
-        description: "Failed to add vendor. Please try again.",
+        description: `Failed to ${isEditMode ? 'update' : 'add'} vendor. Please try again.`,
         variant: "destructive",
       });
     }
+  };
+
+  const handleEditVendor = (vendor: Vendor) => {
+    setSelectedVendor(vendor);
+    setIsEditMode(true);
+    setVendorForm({
+      name: vendor.name,
+      company: vendor.company,
+      email: vendor.email,
+      phone: vendor.phone,
+      city: vendor.city,
+      address: vendor.address,
+      expertise: vendor.expertise,
+      status: vendor.status,
+      rating: vendor.rating
+    });
+    setVendorDetailsOpen(false);
+    setVendorDialogOpen(true);
+  };
+
+  const handleDeleteVendor = async () => {
+    if (!vendorToDelete) return;
+
+    try {
+      const { error } = await supabase
+        .from('vendors')
+        .delete()
+        .eq('id', vendorToDelete.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Vendor Deleted",
+        description: "Vendor has been removed successfully.",
+      });
+
+      setDeleteDialogOpen(false);
+      setVendorToDelete(null);
+      setVendorDetailsOpen(false);
+      loadVendors();
+    } catch (e) {
+      console.error('handleDeleteVendor error', e);
+      toast({
+        title: "Error",
+        description: "Failed to delete vendor. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRowClick = (vendor: Vendor) => {
+    setSelectedVendor(vendor);
+    setVendorDetailsOpen(true);
   };
 
   const handleCompleteTask = async (taskId: string) => {
@@ -375,8 +452,8 @@ export default function Vendors() {
                   </DialogTrigger>
                   <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                      <DialogTitle>Register New Vendor</DialogTitle>
-                      <DialogDescription>Add vendor details and expertise</DialogDescription>
+                      <DialogTitle>{isEditMode ? 'Edit Vendor' : 'Register New Vendor'}</DialogTitle>
+                      <DialogDescription>{isEditMode ? 'Update vendor details and expertise' : 'Add vendor details and expertise'}</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -477,8 +554,12 @@ export default function Vendors() {
                       </div>
                     </div>
                     <DialogFooter>
-                      <Button variant="outline" onClick={() => setVendorDialogOpen(false)}>Cancel</Button>
-                      <Button onClick={handleAddVendor}>Add Vendor</Button>
+                      <Button variant="outline" onClick={() => {
+                        setVendorDialogOpen(false);
+                        setIsEditMode(false);
+                        setSelectedVendor(null);
+                      }}>Cancel</Button>
+                      <Button onClick={handleAddVendor}>{isEditMode ? 'Update Vendor' : 'Add Vendor'}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -493,6 +574,7 @@ export default function Vendors() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Vendor ID</TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Company</TableHead>
                       <TableHead>City</TableHead>
@@ -505,7 +587,16 @@ export default function Vendors() {
                   </TableHeader>
                   <TableBody>
                     {vendors.map((vendor) => (
-                      <TableRow key={vendor.id}>
+                      <TableRow 
+                        key={vendor.id} 
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => handleRowClick(vendor)}
+                      >
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-xs">
+                            {vendor.vendor_id || 'N/A'}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="font-medium">{vendor.name}</TableCell>
                         <TableCell>{vendor.company}</TableCell>
                         <TableCell>
@@ -542,11 +633,23 @@ export default function Vendors() {
                             {vendor.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="outline">
-                            <Edit className="h-3 w-3 mr-1" />
-                            Edit
-                          </Button>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => handleEditVendor(vendor)}>
+                              <Edit className="h-3 w-3 mr-1" />
+                              Edit
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="destructive" 
+                              onClick={() => {
+                                setVendorToDelete(vendor);
+                                setDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -770,6 +873,135 @@ export default function Vendors() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleProcessPayment}>Process Payment</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vendor Details Dialog */}
+      <Dialog open={vendorDetailsOpen} onOpenChange={setVendorDetailsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Vendor Details</DialogTitle>
+            <DialogDescription>Complete vendor information</DialogDescription>
+          </DialogHeader>
+          {selectedVendor && (
+            <div className="space-y-6 py-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <Badge variant="outline" className="font-mono text-xs mb-2">
+                    {selectedVendor.vendor_id || 'N/A'}
+                  </Badge>
+                  <h3 className="text-2xl font-bold">{selectedVendor.name}</h3>
+                  <p className="text-lg text-muted-foreground">{selectedVendor.company}</p>
+                </div>
+                <Badge variant={selectedVendor.status === 'Active' ? 'default' : 'secondary'} className="text-sm">
+                  {selectedVendor.status}
+                </Badge>
+              </div>
+
+              <div className="grid gap-4">
+                <div className="flex items-center gap-3 text-sm">
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  <span>{selectedVendor.email}</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <Phone className="h-4 w-4 text-muted-foreground" />
+                  <span>{selectedVendor.phone}</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">{selectedVendor.city}</div>
+                    <div className="text-muted-foreground">{selectedVendor.address}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Expertise</Label>
+                <div className="flex flex-wrap gap-2">
+                  {selectedVendor.expertise.map((exp, i) => (
+                    <Badge key={i} variant="secondary">
+                      {exp}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div>
+                  <Label className="text-sm font-medium">Rating</Label>
+                  <div className="flex items-center gap-1 mt-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <span 
+                        key={star} 
+                        className={`text-lg ${star <= selectedVendor.rating ? 'text-yellow-500' : 'text-gray-300'}`}
+                      >
+                        ★
+                      </span>
+                    ))}
+                    <span className="ml-2 text-sm text-muted-foreground">
+                      {selectedVendor.rating}/5
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-xs text-muted-foreground">
+                Registered on {new Date(selectedVendor.created_at).toLocaleDateString('en-IN', {
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric'
+                })}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVendorDetailsOpen(false)}>Close</Button>
+            <Button 
+              variant="destructive"
+              onClick={() => {
+                if (selectedVendor) {
+                  setVendorToDelete(selectedVendor);
+                  setDeleteDialogOpen(true);
+                }
+              }}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Vendor
+            </Button>
+            <Button onClick={() => selectedVendor && handleEditVendor(selectedVendor)}>
+              <Edit className="h-4 w-4 mr-2" />
+              Edit Vendor
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Vendor</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this vendor? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {vendorToDelete && (
+            <div className="py-4">
+              <div className="rounded-lg bg-muted p-4 space-y-2">
+                <div className="font-medium">{vendorToDelete.name}</div>
+                <div className="text-sm text-muted-foreground">{vendorToDelete.company}</div>
+                <div className="text-sm text-muted-foreground">{vendorToDelete.city}</div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteVendor}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Vendor
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

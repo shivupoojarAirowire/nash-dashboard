@@ -1,6 +1,6 @@
-import { LayoutDashboard, Store, Upload, Package, Calendar, FolderKanban, LogOut, Users as UsersIcon, ChevronRight, Map as MapIcon, Wrench, FileText, Settings as SettingsIcon, Tag, Truck, Wifi } from "lucide-react";
+import { LayoutDashboard, Store, Upload, Package, Calendar, FolderKanban, LogOut, Users as UsersIcon, ChevronRight, Map as MapIcon, Wrench, FileText, Settings as SettingsIcon, Tag, Truck, Wifi, Settings, Network, BarChart3 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useEffect, useState } from "react";
@@ -57,6 +57,8 @@ const catalogItems = [
     icon: FolderKanban,
     subItems: [
   { title: "Dashboard", url: "/project-manager/dashboard", icon: LayoutDashboard },
+  { title: "Add Store", url: "/add-store", icon: Store },
+  { title: "Onboard Store", url: "/project-operations", icon: Settings },
   { title: "HeatMaps", url: "/project-manager/load-site", icon: MapIcon },
   { title: "Device Configurations", url: "/project-manager/device-configurations", icon: Package }
     ]
@@ -73,6 +75,8 @@ const catalogItems = [
   { title: "Documents", url: "/documents", icon: FileText },
   { title: "Vendors", url: "/vendors", icon: Truck },
   { title: "ISP Management", url: "/isp-management", icon: Wifi },
+  { title: "Network Operations", url: "/network-operations", icon: Network },
+  { title: "Reports", url: "/reports", icon: BarChart3 },
   { 
     title: "Settings", 
     url: "/settings", 
@@ -86,16 +90,44 @@ const catalogItems = [
 export function AppSidebar() {
   const { open } = useSidebar();
   const location = useLocation();
+  const navigate = useNavigate();
   const currentPath = location.pathname;
   const { signOut, user } = useAuth();
   const [visibleItems, setVisibleItems] = useState<typeof catalogItems>([]);
   const { has, loading: flagsLoading } = useFeatureFlags();
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [userName, setUserName] = useState<string>("");
 
   useEffect(() => {
     if (!user) {
       setVisibleItems([]);
+      setUserRoles([]);
+      setUserName("");
       return;
     }
+
+    // Fetch user roles and profile
+    async function loadUserData() {
+      try {
+        const { data: roles } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id);
+        const roleNames = roles?.map((r) => r.role) || [];
+        setUserRoles(roleNames);
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        setUserName(profile?.full_name || user.email || "User");
+      } catch (e) {
+        console.error('Error loading user data:', e);
+      }
+    }
+    loadUserData();
+
     const filtered = catalogItems.filter((item) => has(item.title));
     setVisibleItems(filtered);
   }, [user, has, flagsLoading]);
@@ -107,13 +139,22 @@ export function AppSidebar() {
       <SidebarHeader className="border-b border-sidebar-border">
         <div className="flex items-center gap-2 px-4 py-4">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-primary">
-            <span className="text-sm font-bold text-primary-foreground">N</span>
+            <span className="text-sm font-bold text-primary-foreground">
+              {userName.charAt(0).toUpperCase() || "N"}
+            </span>
           </div>
           {open && (
             <div className="flex flex-col">
-              <span className="text-sm font-semibold text-sidebar-foreground">NaaS Platform</span>
+              <button
+                className="text-sm font-semibold text-sidebar-foreground text-left hover:underline focus:outline-none"
+                onClick={() => navigate("/profile")}
+                title="View Profile"
+                style={{ background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer" }}
+              >
+                {userName}
+              </button>
               <span className="text-xs text-sidebar-foreground/60">
-                {user?.email || "Network as a Service"}
+                {userRoles.length > 0 ? userRoles.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(", ") : "User"}
               </span>
             </div>
           )}

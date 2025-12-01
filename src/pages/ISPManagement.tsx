@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Wifi, Plus, Edit, Calendar, DollarSign, CheckCircle2, AlertCircle } from "lucide-react";
+import { Wifi, Plus, Edit, Calendar, DollarSign, CheckCircle2, AlertCircle, Upload, Download } from "lucide-react";
 
 type ISPProvider = {
   id: string;
@@ -55,6 +55,24 @@ type ISPTask = {
   notes?: string;
 };
 
+type StoreISPDetail = {
+  id: string;
+  store_code: string;
+  isp1_status: string;
+  isp1_provider: string;
+  isp1_circuit_id: string;
+  isp1_delivery_date?: string;
+  isp2_status: string;
+  isp2_provider: string;
+  isp2_circuit_id: string;
+  isp2_delivery_date?: string;
+  created_at: string;
+  stores?: {
+    city: string;
+    store: string;
+  };
+};
+
 const serviceTypes = ['Broadband', 'Leased Line', 'MPLS', 'SD-WAN', 'Fiber', 'Wireless'];
 const linkTypes = ['Primary', 'Backup', 'Load Balance'];
 const billingCycles = ['Monthly', 'Quarterly', 'Yearly'];
@@ -67,9 +85,14 @@ export default function ISPManagement() {
   const [providers, setProviders] = useState<ISPProvider[]>([]);
   const [connections, setConnections] = useState<ISPConnection[]>([]);
   const [tasks, setTasks] = useState<ISPTask[]>([]);
+  const [storeISPDetails, setStoreISPDetails] = useState<StoreISPDetail[]>([]);
+  const [stores, setStores] = useState<any[]>([]);
+  const [filteredProviders, setFilteredProviders] = useState<ISPProvider[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [loadingStoreISP, setLoadingStoreISP] = useState(true);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form states
   const [providerForm, setProviderForm] = useState({
@@ -106,7 +129,23 @@ export default function ISPManagement() {
     loadProviders();
     loadConnections();
     loadTasks();
+    loadStoreISPDetails();
+    loadStores();
   }, []);
+
+  const loadStores = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stores')
+        .select('store_code, store, city')
+        .order('store_code', { ascending: true });
+
+      if (error) throw error;
+      setStores(data || []);
+    } catch (e) {
+      console.error('loadStores error', e);
+    }
+  };
 
   const loadProviders = async () => {
     try {
@@ -118,6 +157,7 @@ export default function ISPManagement() {
 
       if (error) throw error;
       setProviders(data || []);
+      setFilteredProviders(data || []);
     } catch (e) {
       console.error('loadProviders error', e);
     } finally {
@@ -171,13 +211,238 @@ export default function ISPManagement() {
     }
   };
 
-  const handleAddProvider = async () => {
+  const loadStoreISPDetails = async () => {
     try {
-      const { error } = await supabase
-        .from('isp_providers')
-        .insert([providerForm]);
+      console.log('loadStoreISPDetails: Starting...');
+      setLoadingStoreISP(true);
+      const { data, error} = await supabase
+        .from('store_isp_details')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      console.log('loadStoreISPDetails: Query result:', { dataLength: data?.length, error });
 
       if (error) throw error;
+
+      // Load store information separately
+      if (data && data.length > 0) {
+        const storeCodes = [...new Set(data.map(d => d.store_code))];
+        console.log('loadStoreISPDetails: Loading stores for codes:', storeCodes);
+        
+        const { data: storesData } = await supabase
+          .from('stores')
+          .select('store_code, city, store')
+          .in('store_code', storeCodes);
+        
+        console.log('loadStoreISPDetails: Stores data:', storesData);
+        
+        const storesMap = new Map(storesData?.map(s => [s.store_code, s]) || []);
+        
+        const enrichedData = data.map(item => ({
+          ...item,
+          stores: storesMap.get(item.store_code)
+        }));
+        
+        console.log('loadStoreISPDetails: Setting enrichedData with', enrichedData.length, 'items');
+        setStoreISPDetails(enrichedData);
+      } else {
+        console.log('loadStoreISPDetails: Setting empty/raw data');
+        setStoreISPDetails(data || []);
+      }
+    } catch (e) {
+      console.error('loadStoreISPDetails error', e);
+    } finally {
+      setLoadingStoreISP(false);
+      console.log('loadStoreISPDetails: Complete');
+    }
+  };
+
+  const downloadISPTemplate = () => {
+    const headers = [
+      'store_code',
+      'ISP1_Status',
+      'ISP1_Provider',
+      'ISP1_Circuit_ID',
+      'ISP1_Delivery_Date',
+      'ISP2_Status',
+      'ISP2_Provider',
+      'ISP2_Circuit_ID',
+      'ISP2_Delivery_Date'
+    ];
+    
+    const sampleRow = [
+      'BLR_KTHNUR_P01R1CC',
+      'Delivered',
+      'Airtel BB',
+      'GTPL_AIROWIRE_171_25102025',
+      '2025-10-28',
+      'Assigned',
+      'Jio Fiber',
+      'JIO_BLR_12345',
+      ''
+    ];
+    
+    const csvContent = headers.join(',') + '\n' + sampleRow.join(',') + '\n';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'store_isp_details_template.csv';
+    link.click();
+  };
+
+  const convertDateFormat = (dateStr: string): string | null => {
+    if (!dateStr || dateStr.trim() === '') return null;
+    
+    const trimmed = dateStr.trim();
+    
+    // If already in YYYY-MM-DD format
+    if (trimmed.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return trimmed;
+    }
+    
+    // Convert DD-MM-YYYY to YYYY-MM-DD
+    if (trimmed.match(/^\d{2}-\d{2}-\d{4}$/)) {
+      const [day, month, year] = trimmed.split('-');
+      return `${year}-${month}-${day}`;
+    }
+    
+    return null;
+  };
+
+  const handleISPFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(line => line.trim());
+      
+      if (lines.length < 2) {
+        toast({
+          title: "Error",
+          description: "CSV file is empty or invalid",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const rows = lines.slice(1);
+      const ispDetails: any[] = [];
+      const errors: string[] = [];
+      
+      for (let i = 0; i < rows.length; i++) {
+        const line = rows[i].trim();
+        if (!line) continue;
+        
+        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/^"(.*)"$/, '$1'));
+        
+        if (values.length < 5) {
+          errors.push(`Row ${i + 2}: Not enough columns (expected 9, got ${values.length})`);
+          continue;
+        }
+
+        // Convert dates from DD-MM-YYYY to YYYY-MM-DD
+        const isp1Date = convertDateFormat(values[4]);
+        const isp2Date = convertDateFormat(values[8]);
+
+        if (values[4] && values[4].trim() !== '' && !isp1Date) {
+          errors.push(`Row ${i + 2}: Invalid ISP1 delivery date format "${values[4]}". Use DD-MM-YYYY or YYYY-MM-DD`);
+          continue;
+        }
+
+        if (values[8] && values[8].trim() !== '' && !isp2Date) {
+          errors.push(`Row ${i + 2}: Invalid ISP2 delivery date format "${values[8]}". Use DD-MM-YYYY or YYYY-MM-DD`);
+          continue;
+        }
+
+        const record: any = {
+          store_code: values[0] || '',
+          isp1_status: values[1] || 'Pending',
+          isp1_provider: values[2] || null,
+          isp1_circuit_id: values[3] || null,
+          isp1_delivery_date: isp1Date,
+          isp2_status: values[5] || 'Pending',
+          isp2_provider: values[6] || null,
+          isp2_circuit_id: values[7] || null,
+          isp2_delivery_date: isp2Date
+        };
+
+        if (!record.store_code) {
+          errors.push(`Row ${i + 2}: Missing required field (store_code)`);
+          continue;
+        }
+
+        ispDetails.push(record);
+      }
+
+      if (errors.length > 0) {
+        toast({
+          title: "Validation Errors",
+          description: `Found ${errors.length} error(s). First error: ${errors[0]}`,
+          variant: "destructive",
+        });
+        console.error('CSV validation errors:', errors);
+        return;
+      }
+
+      if (ispDetails.length === 0) {
+        toast({
+          title: "Error",
+          description: "No valid data found in CSV file",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      console.log('Uploading ISP details:', ispDetails);
+      
+      const { data, error } = await supabase
+        .from('store_isp_details')
+        .upsert(ispDetails, { onConflict: 'store_code' })
+        .select();
+
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Upload successful, records inserted:', data);
+
+      toast({
+        title: "Success",
+        description: `${ispDetails.length} store ISP records uploaded successfully.`,
+      });
+
+      await loadStoreISPDetails();
+      
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (e: any) {
+      console.error('handleISPFileUpload error', e);
+      toast({
+        title: "Upload Failed",
+        description: e.message || "Please check the file format.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAddProvider = async () => {
+    try {
+      console.log('Attempting to add provider:', providerForm);
+      
+      const { data, error } = await supabase
+        .from('isp_providers')
+        .insert([providerForm])
+        .select();
+
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Provider added successfully:', data);
 
       toast({
         title: "ISP Provider Added",
@@ -196,27 +461,75 @@ export default function ISPManagement() {
         status: 'Active'
       });
       loadProviders();
-    } catch (e) {
+    } catch (e: any) {
       console.error('handleAddProvider error', e);
       toast({
         title: "Error",
-        description: "Failed to add ISP provider. Please try again.",
+        description: e.message || "Failed to add ISP provider. Please try again.",
         variant: "destructive",
       });
     }
   };
 
+  const handleStoreCodeChange = (storeCode: string) => {
+    const selectedStore = stores.find(s => s.store_code === storeCode);
+    
+    if (selectedStore) {
+      // Auto-fill store name
+      setConnectionForm(prev => ({
+        ...prev,
+        store_code: storeCode,
+        store_name: selectedStore.store
+      }));
+
+      // Filter ISP providers by matching city
+      const filtered = providers.filter(p => 
+        p.city.toLowerCase() === selectedStore.city.toLowerCase()
+      );
+      setFilteredProviders(filtered.length > 0 ? filtered : providers);
+    } else {
+      setConnectionForm(prev => ({
+        ...prev,
+        store_code: storeCode,
+        store_name: ''
+      }));
+      setFilteredProviders(providers);
+    }
+  };
+
   const handleAddConnection = async () => {
     try {
+      // Validate and format provisioned date
+      let formattedDate = null;
+      if (connectionForm.provisioned_date && connectionForm.provisioned_date.trim() !== '') {
+        const dateValue = connectionForm.provisioned_date.trim();
+        
+        // Check if date is in DD-MM-YYYY format and convert to YYYY-MM-DD
+        if (dateValue.match(/^\d{2}-\d{2}-\d{4}$/)) {
+          const [day, month, year] = dateValue.split('-');
+          formattedDate = `${year}-${month}-${day}`;
+        } 
+        // Check if already in YYYY-MM-DD format
+        else if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          formattedDate = dateValue;
+        }
+        else {
+          throw new Error('Invalid date format. Please use DD-MM-YYYY or YYYY-MM-DD format.');
+        }
+      }
+
       const { error } = await supabase
         .from('isp_connections')
         .insert([{
           ...connectionForm,
           monthly_cost: parseFloat(connectionForm.monthly_cost),
-          provisioned_date: connectionForm.provisioned_date || null
+          provisioned_date: formattedDate
         }]);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
 
       toast({
         title: "Connection Added",
@@ -237,11 +550,11 @@ export default function ISPManagement() {
         billing_cycle: 'Monthly'
       });
       loadConnections();
-    } catch (e) {
+    } catch (e: any) {
       console.error('handleAddConnection error', e);
       toast({
         title: "Error",
-        description: "Failed to add connection. Please try again.",
+        description: e.message || "Failed to add connection. Please check all fields and try again.",
         variant: "destructive",
       });
     }
@@ -343,6 +656,7 @@ export default function ISPManagement() {
           <TabsTrigger value="providers">ISP Providers</TabsTrigger>
           <TabsTrigger value="connections">Store Connections</TabsTrigger>
           <TabsTrigger value="overview">Subscription Overview</TabsTrigger>
+          <TabsTrigger value="store-isp">Store ISP Details</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
         </TabsList>
 
@@ -542,39 +856,57 @@ export default function ISPManagement() {
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <Label>ISP Provider</Label>
+                          <Label>Store Code</Label>
                           <Select
-                            value={connectionForm.isp_id}
-                            onValueChange={(value) => setConnectionForm({ ...connectionForm, isp_id: value })}
+                            value={connectionForm.store_code}
+                            onValueChange={handleStoreCodeChange}
                           >
                             <SelectTrigger>
-                              <SelectValue placeholder="Select provider" />
+                              <SelectValue placeholder="Select store code" />
                             </SelectTrigger>
                             <SelectContent>
-                              {providers.filter(p => p.status === 'Active').map(provider => (
-                                <SelectItem key={provider.id} value={provider.id}>
-                                  {provider.provider_name} - {provider.city}
+                              {stores.map((store) => (
+                                <SelectItem key={store.store_code} value={store.store_code}>
+                                  {store.store_code} - {store.city}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
                         <div>
-                          <Label>Store Code</Label>
+                          <Label>Store Name</Label>
                           <Input
-                            value={connectionForm.store_code}
-                            onChange={(e) => setConnectionForm({ ...connectionForm, store_code: e.target.value })}
-                            placeholder="STR001"
+                            value={connectionForm.store_name}
+                            readOnly
+                            placeholder="Auto-filled after selecting store"
+                            className="bg-muted"
                           />
                         </div>
                       </div>
                       <div>
-                        <Label>Store Name</Label>
-                        <Input
-                          value={connectionForm.store_name}
-                          onChange={(e) => setConnectionForm({ ...connectionForm, store_name: e.target.value })}
-                          placeholder="Store name"
-                        />
+                        <Label>
+                          ISP Provider
+                          {filteredProviders.length < providers.length && (
+                            <span className="text-sm text-muted-foreground ml-2">
+                              (Filtered by store city: {filteredProviders.length} matches)
+                            </span>
+                          )}
+                        </Label>
+                        <Select
+                          value={connectionForm.isp_id}
+                          onValueChange={(value) => setConnectionForm({ ...connectionForm, isp_id: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select ISP provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {filteredProviders.filter(p => p.status === 'Active').map(provider => (
+                              <SelectItem key={provider.id} value={provider.id}>
+                                {provider.provider_name} - {provider.city} ({provider.area})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -628,7 +960,9 @@ export default function ISPManagement() {
                             type="date"
                             value={connectionForm.provisioned_date}
                             onChange={(e) => setConnectionForm({ ...connectionForm, provisioned_date: e.target.value })}
+                            placeholder="YYYY-MM-DD"
                           />
+                          <p className="text-xs text-muted-foreground mt-1">Format: YYYY-MM-DD (e.g., 2025-11-24)</p>
                         </div>
                         <div>
                           <Label>Billing Cycle</Label>
@@ -805,6 +1139,89 @@ export default function ISPManagement() {
                           </TableCell>
                         </TableRow>
                       ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Store ISP Details Tab */}
+        <TabsContent value="store-isp">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Store ISP Details</CardTitle>
+                  <CardDescription>Manage ISP connections (ISP1 & ISP2) for each store with bulk upload</CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={downloadISPTemplate}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download Template
+                  </Button>
+                  <Button onClick={() => fileInputRef.current?.click()}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Bulk Upload
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    onChange={handleISPFileUpload}
+                    style={{ display: 'none' }}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loadingStoreISP ? (
+                <div className="text-center py-8">Loading store ISP details...</div>
+              ) : storeISPDetails.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No store ISP details found. Upload data using the Bulk Upload button.
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>STORE CODE</TableHead>
+                      <TableHead>CITY</TableHead>
+                      <TableHead>STORE NAME</TableHead>
+                      <TableHead>ISP 1 STATUS</TableHead>
+                      <TableHead>ISP 1 PROVIDER</TableHead>
+                      <TableHead>ISP 1 CIRCUIT ID</TableHead>
+                      <TableHead>ISP 1 DELIVERY DATE</TableHead>
+                      <TableHead>ISP 2 STATUS</TableHead>
+                      <TableHead>ISP 2 PROVIDER</TableHead>
+                      <TableHead>ISP 2 CIRCUIT ID</TableHead>
+                      <TableHead>ISP 2 DELIVERY DATE</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {storeISPDetails.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-medium">{item.store_code}</TableCell>
+                        <TableCell>{item.stores?.city || '-'}</TableCell>
+                        <TableCell>{item.stores?.store || '-'}</TableCell>
+                        <TableCell>
+                          <Badge variant={item.isp1_status === 'Delivered' ? 'default' : 'secondary'}>
+                            {item.isp1_status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{item.isp1_provider || '-'}</TableCell>
+                        <TableCell className="font-mono text-sm">{item.isp1_circuit_id || '-'}</TableCell>
+                        <TableCell>{item.isp1_delivery_date ? new Date(item.isp1_delivery_date).toLocaleDateString() : '-'}</TableCell>
+                        <TableCell>
+                          <Badge variant={item.isp2_status === 'Delivered' ? 'default' : 'secondary'}>
+                            {item.isp2_status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{item.isp2_provider || '-'}</TableCell>
+                        <TableCell className="font-mono text-sm">{item.isp2_circuit_id || '-'}</TableCell>
+                        <TableCell>{item.isp2_delivery_date ? new Date(item.isp2_delivery_date).toLocaleDateString() : '-'}</TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               )}
