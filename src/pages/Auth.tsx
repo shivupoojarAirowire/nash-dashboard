@@ -54,20 +54,7 @@ export default function Auth() {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        // Redirect authenticated users to dashboard
-        if (session?.user) {
-          navigate("/");
-        }
-      }
-    );
-
-    // THEN check for existing session
+    // Check for existing session first
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -76,6 +63,33 @@ export default function Auth() {
         navigate("/");
       }
     });
+
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('Auth event:', event);
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        // Handle different auth events
+        if (event === 'SIGNED_IN' && session?.user) {
+          navigate("/");
+        }
+        
+        // Clear session on sign out or token refresh errors
+        if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+          setSession(session);
+          setUser(session?.user ?? null);
+        }
+        
+        // Handle user updated event
+        if (event === 'USER_UPDATED' && session?.user) {
+          setSession(session);
+          setUser(session?.user ?? null);
+        }
+      }
+    );
 
     return () => subscription.unsubscribe();
   }, [navigate]);
@@ -131,7 +145,7 @@ export default function Auth() {
         // Airowire users get 'user' role, vendors get 'vendor', customers get 'customer'
         const userRole = userType === "airowire" ? "user" : userType; // vendor or customer
         
-        // Sign up with Supabase Auth
+        // Sign up with Supabase Auth - minimal data to avoid timeout
         const { data: authData, error: signupError } = await supabase.auth.signUp({
           email: validatedData.email,
           password: validatedData.password,
@@ -139,11 +153,6 @@ export default function Auth() {
             emailRedirectTo: redirectUrl,
             data: {
               full_name: validatedData.fullName,
-              phone: validatedData.phone,
-              address: userType === "airowire" ? null : (validatedData as any).address,
-              department: userType === "airowire" ? (validatedData as any).department : null,
-              user_type: userType,
-              role: userRole, // Pass the role to the trigger
             },
           },
         });
@@ -160,8 +169,34 @@ export default function Auth() {
             throw signupError;
           }
         } else if (authData.user) {
-          // Wait for trigger to create profile
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Update profile details asynchronously (non-blocking)
+          supabase.rpc('update_user_profile_details', {
+            user_id_param: authData.user.id,
+            phone_param: validatedData.phone,
+            address_param: userType === "airowire" ? null : (validatedData as any).address,
+            department_param: userType === "airowire" ? (validatedData as any).department : null,
+          }).then(({ error }) => {
+            if (error) console.warn('Profile update warning:', error);
+          });
+
+          // Assign role asynchronously (non-blocking)
+          supabase.from('user_roles').insert({
+            user_id: authData.user.id,
+            role: userRole,
+          }).then(({ error }) => {
+            if (error) console.warn('Role assignment warning:', error);
+          });
+
+          // Clear any existing session to prevent refresh token errors
+          await supabase.auth.signOut({ scope: 'local' });
+
+          // Reset form
+          setEmail(validatedData.email);
+          setPassword('');
+          setFullName('');
+          setPhone('');
+          setAddress('');
+          setDepartment('');
 
           toast({
             title: "Success",
