@@ -140,15 +140,31 @@ const AddStore: React.FC = () => {
             .eq('store_code', store.store_code);
 
           // Check for floor plan in storage
-          const { data: floorPlans } = await supabase
-            .storage
-            .from('floor-maps')
-            .list(store.store_code);
+          let hasFloorPlan = false;
+          try {
+            const { data: floorPlans } = await supabase.storage.from('floor-maps').list(store.store_code);
+            hasFloorPlan = (floorPlans && floorPlans.length > 0) || false;
+          } catch (err) {
+            // ignore storage list errors and fallback to DB metadata check
+            console.warn('Storage list error for', store.store_code, err);
+          }
+
+          // Also check the persisted metadata table in case files were uploaded but storage listing failed
+          try {
+            const { count: fpCount, error: fpError } = await supabase
+              .from('store_floor_plans')
+              .select('id', { count: 'exact', head: true })
+              .eq('store_code', store.store_code);
+
+            if (!fpError && (fpCount || 0) > 0) hasFloorPlan = true;
+          } catch (err) {
+            console.warn('store_floor_plans query error for', store.store_code, err);
+          }
 
           return {
             ...store,
             deviceCount: deviceCount || 0,
-            hasFloorPlan: (floorPlans && floorPlans.length > 0) || false,
+            hasFloorPlan,
           };
         })
       );
