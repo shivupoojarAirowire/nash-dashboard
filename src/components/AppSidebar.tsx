@@ -1,4 +1,4 @@
-import { LayoutDashboard, Store, Upload, Package, Calendar, FolderKanban, LogOut, Users as UsersIcon, ChevronRight, Map as MapIcon, Wrench, FileText, Settings as SettingsIcon, Tag, Truck, Wifi, Settings, Network, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Store, Upload, Package, Calendar, FolderKanban, LogOut, Users as UsersIcon, ChevronRight, Map as MapIcon, Wrench, FileText, Settings as SettingsIcon, Tag, Truck, Wifi, Settings, Network, BarChart3, UserCircle } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,7 @@ const catalogItems = [
   { title: "ISP Management", url: "/isp-management", icon: Wifi },
   { title: "Network Operations", url: "/network-operations", icon: Network },
   { title: "Reports", url: "/reports", icon: BarChart3 },
+  { title: "Customer", url: "/customer", icon: UserCircle },
   { 
     title: "Settings", 
     url: "/settings", 

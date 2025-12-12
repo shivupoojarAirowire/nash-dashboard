@@ -15,11 +15,6 @@ import { Building2, MapPin, Network } from "lucide-react";
 import { getStores, type StoreRow } from "@/integrations/supabase/stores";
 import { useToast } from "@/components/ui/use-toast";
 
-const sampleStores = [
-  { id: "1", city: "NY", store: "NYC-01", store_code: "NYC-01", address: "New York, NY", poc: "", poc_no: "", priority: "Medium", site_readiness: "Ready", created_at: "", updated_at: "", },
-  { id: "2", city: "CA", store: "LA-02", store_code: "LA-02", address: "Los Angeles, CA", poc: "", poc_no: "", priority: "High", site_readiness: "Ready", created_at: "", updated_at: "", },
-];
-
 const Stores: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -31,10 +26,10 @@ const Stores: React.FC = () => {
       try {
         const data = await getStores();
         if (data && data.length) setStores(data as StoreRow[]);
-        else setStores(sampleStores as unknown as StoreRow[]);
+        else setStores([]);
       } catch (e) {
-        console.warn("Failed to load stores, using sample", e);
-        setStores(sampleStores as unknown as StoreRow[]);
+        console.warn("Failed to load stores", e);
+        setStores([]);
       }
     };
     load();

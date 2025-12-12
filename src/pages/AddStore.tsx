@@ -243,6 +243,7 @@ const AddStore: React.FC = () => {
     try {
       let successCount = 0;
       let errorCount = 0;
+      const uploadedRecords: { file_path: string; file_name: string; file_url?: string }[] = [];
 
       for (const file of floorPlanFiles) {
         try {
@@ -256,6 +257,9 @@ const AddStore: React.FC = () => {
 
           if (uploadError) throw uploadError;
           successCount++;
+          // collect metadata for DB insert
+          const publicUrl = supabase.storage.from('floor-maps').getPublicUrl(filePath).data?.publicUrl;
+          uploadedRecords.push({ file_path: filePath, file_name: fileName, file_url: publicUrl });
         } catch (error) {
           console.error(`Error uploading ${file.name}:`, error);
           errorCount++;
@@ -263,6 +267,24 @@ const AddStore: React.FC = () => {
       }
 
       if (successCount > 0) {
+        // Persist uploaded file metadata to DB
+        try {
+          const recordsToInsert = uploadedRecords.map(r => ({
+            store_code: storeCode,
+            file_path: r.file_path,
+            file_name: r.file_name,
+            file_url: r.file_url || null
+          }));
+
+          const { error: insertError } = await supabase
+            .from('store_floor_plans')
+            .insert(recordsToInsert);
+
+          if (insertError) console.warn('Failed to persist floor plan metadata:', insertError);
+        } catch (err) {
+          console.warn('Error inserting floor plan metadata:', err);
+        }
+
         toast({
           title: "Success",
           description: `${successCount} floor plan(s) uploaded successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
