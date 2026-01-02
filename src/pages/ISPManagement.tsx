@@ -92,6 +92,7 @@ export default function ISPManagement() {
   const [loadingStoreISP, setLoadingStoreISP] = useState(true);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const [activeView, setActiveView] = useState<'providers' | 'connections' | 'overview' | 'store-isp' | 'tasks'>('providers');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form states
@@ -651,17 +652,47 @@ export default function ISPManagement() {
         </Card>
       </div>
 
-      <Tabs defaultValue="providers" className="w-full">
-        <TabsList className="mb-6">
-          <TabsTrigger value="providers">ISP Providers</TabsTrigger>
-          <TabsTrigger value="connections">Store Connections</TabsTrigger>
-          <TabsTrigger value="overview">Subscription Overview</TabsTrigger>
-          <TabsTrigger value="store-isp">Store ISP Details</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
-        </TabsList>
+      {/* Sub-menu Navigation */}
+      <div className="mb-6 flex gap-2 border-b flex-wrap">
+        <Button
+          variant={activeView === 'providers' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('providers')}
+          className="rounded-b-none"
+        >
+          ISP Providers
+        </Button>
+        <Button
+          variant={activeView === 'connections' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('connections')}
+          className="rounded-b-none"
+        >
+          Store Connections
+        </Button>
+        <Button
+          variant={activeView === 'overview' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('overview')}
+          className="rounded-b-none"
+        >
+          Subscription Overview
+        </Button>
+        <Button
+          variant={activeView === 'store-isp' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('store-isp')}
+          className="rounded-b-none"
+        >
+          Store ISP Details
+        </Button>
+        <Button
+          variant={activeView === 'tasks' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('tasks')}
+          className="rounded-b-none"
+        >
+          Tasks
+        </Button>
+      </div>
 
-        {/* Providers Tab */}
-        <TabsContent value="providers">
+      {/* Providers View */}
+      {activeView === 'providers' && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -830,10 +861,10 @@ export default function ISPManagement() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Connections Tab */}
-        <TabsContent value="connections">
+      {/* Connections View */}
+      {activeView === 'connections' && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -1064,10 +1095,10 @@ export default function ISPManagement() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Overview Tab */}
-        <TabsContent value="overview">
+      {/* Overview View */}
+      {activeView === 'overview' && (
           <Card>
             <CardHeader>
               <CardTitle>Store-wise ISP Subscription Overview</CardTitle>
@@ -1144,10 +1175,10 @@ export default function ISPManagement() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Store ISP Details Tab */}
-        <TabsContent value="store-isp">
+      {/* Store ISP Details View */}
+      {activeView === 'store-isp' && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -1227,10 +1258,10 @@ export default function ISPManagement() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Tasks Tab */}
-        <TabsContent value="tasks">
+      {/* Tasks View */}
+      {activeView === 'tasks' && (
           <Card>
             <CardHeader>
               <CardTitle>ISP Tasks</CardTitle>
@@ -1278,8 +1309,7 @@ export default function ISPManagement() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+      )}
     </div>
   );
 }

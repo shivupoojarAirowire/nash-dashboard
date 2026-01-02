@@ -74,6 +74,7 @@ export default function Vendors() {
   const [vendorDetailsOpen, setVendorDetailsOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [vendorToDelete, setVendorToDelete] = useState<Vendor | null>(null);
+  const [activeView, setActiveView] = useState<'registration' | 'tasks' | 'payments'>('registration');
 
   // Form states
   const [vendorForm, setVendorForm] = useState({
@@ -427,15 +428,33 @@ export default function Vendors() {
         </Card>
       </div>
 
-      <Tabs defaultValue="vendors" className="w-full">
-        <TabsList className="mb-6">
-          <TabsTrigger value="vendors">Vendors</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks & Onboarding</TabsTrigger>
-          <TabsTrigger value="payments">Payments</TabsTrigger>
-        </TabsList>
+      {/* Sub-menu Navigation */}
+      <div className="mb-6 flex gap-2 border-b">
+        <Button
+          variant={activeView === 'registration' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('registration')}
+          className="rounded-b-none"
+        >
+          Vendor Registration
+        </Button>
+        <Button
+          variant={activeView === 'tasks' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('tasks')}
+          className="rounded-b-none"
+        >
+          Vendor Tasks
+        </Button>
+        <Button
+          variant={activeView === 'payments' ? 'default' : 'ghost'}
+          onClick={() => setActiveView('payments')}
+          className="rounded-b-none"
+        >
+          Vendor Payments
+        </Button>
+      </div>
 
-        {/* Vendors Tab */}
-        <TabsContent value="vendors">
+      {/* Vendor Registration View */}
+      {activeView === 'registration' && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -658,10 +677,10 @@ export default function Vendors() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Tasks Tab */}
-        <TabsContent value="tasks">
+      {/* Vendor Tasks View */}
+      {activeView === 'tasks' && (
           <Card>
             <CardHeader>
               <CardTitle>Vendor Tasks & Device Onboarding</CardTitle>
@@ -747,10 +766,10 @@ export default function Vendors() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+      )}
 
-        {/* Payments Tab */}
-        <TabsContent value="payments">
+      {/* Vendor Payments View */}
+      {activeView === 'payments' && (
           <Card>
             <CardHeader>
               <CardTitle>Vendor Payments</CardTitle>
@@ -815,8 +834,7 @@ export default function Vendors() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+      )}
 
       {/* Confirm Task Dialog */}
       <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>

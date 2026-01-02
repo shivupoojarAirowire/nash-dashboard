@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/hooks/useAuth";
+import ChatWindow from "@/components/ChatWindow";
 
 interface LayoutProps {
   children: ReactNode;
@@ -38,6 +39,7 @@ export function Layout({ children }: LayoutProps) {
         <main className="flex-1 overflow-auto">
           {children}
         </main>
+        <ChatWindow />
       </div>
     </SidebarProvider>
   );

@@ -82,7 +82,7 @@ export default function Labelling() {
       // Load site assignments with config_status='Completed'
       const { data: assignments, error: assignError } = await supabase
         .from('site_assignments')
-        .select('id, city, store_id, store_code, assigned_to, firewall_ip, zonal_port_number, config_status, delivery_challan_url, delivery_challan_number')
+        .select('id, city, store_id, store_code, assigned_to, firewall_ip, zonal_port_number, config_status, delivery_challan_url, delivery_challan_number, labeling_done')
         .eq('config_status', 'Completed')
         .order('created_at', { ascending: false });
 
@@ -148,7 +148,7 @@ export default function Labelling() {
           firewall_ip: a.firewall_ip || '-',
           zonal_port_number: a.zonal_port_number || '-',
           devices: allocatedDevices,
-          labeling_done: false, // Default to false since column doesn't exist yet
+          labeling_done: a.labeling_done || false,
           delivery_challan_url: a.delivery_challan_url,
           delivery_challan_number: a.delivery_challan_number
         };
@@ -718,12 +718,12 @@ Phone: ${item.poc_number}
 
   const handleMarkLabelled = async (itemId: string) => {
     try {
-      // TODO: Uncomment when labeling_done column is added to database
-      // const { error } = await supabase
-      //   .from('site_assignments')
-      //   .update({ labeling_done: true })
-      //   .eq('id', itemId);
-      // if (error) throw error;
+      const { error } = await supabase
+        .from('site_assignments')
+        .update({ labeling_done: true })
+        .eq('id', itemId);
+      
+      if (error) throw error;
 
       toast({
         title: "Success",
@@ -753,12 +753,12 @@ Phone: ${item.poc_number}
     }
 
     try {
-      // TODO: Uncomment when labeling_done column is added to database
-      // const { error } = await supabase
-      //   .from('site_assignments')
-      //   .update({ labeling_done: true })
-      //   .in('id', Array.from(selectedItems));
-      // if (error) throw error;
+      const { error } = await supabase
+        .from('site_assignments')
+        .update({ labeling_done: true })
+        .in('id', Array.from(selectedItems));
+      
+      if (error) throw error;
 
       toast({
         title: "Success",
