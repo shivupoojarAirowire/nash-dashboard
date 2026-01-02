@@ -39,18 +39,9 @@ export async function getUniqueCities() {
 }
 
 export async function addStore(store: StoreInsert) {
-  // Normalize site_readiness to match DB constraint values
-  const normalized = { ...store } as any;
-  if (normalized.site_readiness) {
-    const v = String(normalized.site_readiness).trim().toLowerCase();
-    if (v === 'existing site' || v === 'existing' || v === 'ready') normalized.site_readiness = 'Existing site';
-    else if (v === 'new site' || v === 'new' || v === 'not ready') normalized.site_readiness = 'New site';
-    else normalized.site_readiness = normalized.site_readiness;
-  }
-
   const { data, error } = await supabase
     .from('stores')
-    .insert([normalized])
+    .insert([store])
     .select()
     .single();
   
@@ -59,20 +50,9 @@ export async function addStore(store: StoreInsert) {
 }
 
 export async function bulkAddStores(stores: StoreInsert[]) {
-  // Normalize site_readiness values for bulk inserts
-  const normalized = stores.map((s: any) => {
-    const copy = { ...s } as any;
-    if (copy.site_readiness) {
-      const v = String(copy.site_readiness).trim().toLowerCase();
-      if (v === 'existing site' || v === 'existing' || v === 'ready') copy.site_readiness = 'Existing site';
-      else if (v === 'new site' || v === 'new' || v === 'not ready') copy.site_readiness = 'New site';
-    }
-    return copy;
-  });
-
   const { data, error } = await supabase
     .from('stores')
-    .insert(normalized)
+    .insert(stores)
     .select();
   
   if (error) throw error;

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Map, Upload as UploadIcon, UserPlus, Info, Pencil, Trash2, ChevronDown } from "lucide-react";
+import { Map, UserPlus, Info, Pencil, Trash2, ChevronDown, Upload } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -26,6 +26,7 @@ interface User {
   id: string;
   email: string;
   full_name: string | null;
+  department?: string | null;
 }
 
 export default function LoadSite() {
@@ -78,6 +79,7 @@ export default function LoadSite() {
   // Edit dialog states
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [editAssignedEngineer, setEditAssignedEngineer] = useState<string>("");
   const [editDeadline, setEditDeadline] = useState<string>("");
   const [editStatus, setEditStatus] = useState<'Pending' | 'In Progress' | 'Done' | 'Cancelled'>('Pending');
   const [editApsNeeded, setEditApsNeeded] = useState<string>("");
@@ -228,15 +230,27 @@ export default function LoadSite() {
 
   async function loadEngineeringUsers() {
     try {
-      // Note: Filtering by department requires the `department` column migration to be applied.
-      // To avoid type/lint errors before migrations, we fetch minimal fields and filter client-side when possible.
+      // Filter users by department = 'Engineering' to show only engineering team members
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, full_name')
+        .select('id, email, full_name, department')
+        .eq('department', 'Engineering')
         .order('full_name');
       
       if (error) throw error;
+      
+      console.log('🔍 Loaded engineering users:', data);
+      console.log(`✅ Total engineering users: ${data?.length || 0}`);
+      
       setEngineeringUsers((data as User[]) || []);
+      
+      if (!data || data.length === 0) {
+        toast({
+          title: "No Engineering Users",
+          description: "No users found with department = 'Engineering'. Please update user profiles in database.",
+          variant: "destructive"
+        });
+      }
     } catch (error: any) {
       toast({
         title: "Error",
@@ -251,13 +265,29 @@ export default function LoadSite() {
     const query = userSearchQuery.toLowerCase();
     const name = (u.full_name || '').toLowerCase();
     const email = u.email.toLowerCase();
-    return name.includes(query) || email.includes(query);
+    const matches = name.includes(query) || email.includes(query);
+    
+    console.log(`🔍 Searching for "${query}":`, {
+      user: u.full_name || u.email,
+      name,
+      email,
+      matches
+    });
+    
+    return matches;
+  });
+  
+  console.log(`📊 Search results for "${userSearchQuery}":`, {
+    totalEngineers: engineeringUsers.length,
+    filteredCount: filteredUsers.length,
+    showSuggestions: showUserSuggestions,
+    filtered: filteredUsers.map(u => u.full_name || u.email)
   });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     
-    if (!selectedCity || !selectedStore || !floorMapFile || !assignedUserId || !deadline) {
+    if (!selectedCity || !selectedStore || !assignedUserId || !deadline) {
       toast({
         title: "Missing Information",
         description: "Please fill all required fields including deadline",
@@ -268,23 +298,7 @@ export default function LoadSite() {
 
     setUploading(true);
     try {
-      // Upload floor map to Supabase Storage
-      const fileExt = floorMapFile.name.split('.').pop();
-      const fileName = `${selectedStoreCode}_${Date.now()}.${fileExt}`;
-      const filePath = `floor-maps/${selectedCity}/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('inventory')
-        .upload(filePath, floorMapFile);
-
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('inventory')
-        .getPublicUrl(filePath);
-
-      // Save assignment to database (requires site_assignments table migration)
+      // Save assignment to database
       const { data: authData } = await supabase.auth.getUser();
       const assignedBy = authData?.user?.id || null;
 
@@ -294,29 +308,23 @@ export default function LoadSite() {
           city: selectedCity,
           store_id: selectedStore,
           store_code: selectedStoreCode,
-          floor_map_path: filePath,
-          floor_map_url: publicUrl,
           assigned_to: assignedUserId,
           assigned_by: assignedBy,
           deadline_at: new Date(deadline).toISOString(),
-          status: 'Pending',
+          status: 'pending',
         });
 
-      if (insertError) {
-        // If table doesn't exist yet or RLS prevents insert, still treat upload as success and notify
-        console.warn('site_assignments insert error:', insertError);
-      }
+      if (insertError) throw insertError;
 
       toast({
         title: "Success",
-        description: `Floor map uploaded, deadline set, and assignment created`,
+        description: `Assignment created successfully`,
       });
 
       // Reset form
       setSelectedCity("");
       setSelectedStore("");
       setSelectedStoreCode("");
-      setFloorMapFile(null);
       setAssignedUserId("");
       setUserSearchQuery("");
       setDeadline("");
@@ -347,6 +355,7 @@ export default function LoadSite() {
   // Handle Edit Assignment
   function handleEditAssignment(assignment: Assignment) {
     setEditingAssignment(assignment);
+    setEditAssignedEngineer(assignment.assigned_to || "");
     setEditDeadline(new Date(assignment.deadline_at).toISOString().slice(0, 16));
     setEditStatus(assignment.status);
     setEditApsNeeded(assignment.aps_needed?.toString() || "");
@@ -357,74 +366,22 @@ export default function LoadSite() {
     setIsEditOpen(true);
   }
 
-  // Handle Update Assignment
+  // Handle Update Assignment - Only update assigned engineer
   async function handleUpdateAssignment(e: React.FormEvent) {
     e.preventDefault();
     if (!editingAssignment) return;
 
-    // Validate required fields
-    if (!editApsNeeded.trim()) {
-      toast({ title: "Validation Error", description: "APs Needed is required", variant: "destructive" });
+    // Validate engineer is selected
+    if (!editAssignedEngineer) {
+      toast({ title: "Validation Error", description: "Please select an engineer", variant: "destructive" });
       return;
     }
 
-    // Additional validation when marking as Done
-    if (editStatus === 'Done') {
-      if (completeFiles.length === 0) {
-        toast({ title: "Validation Error", description: "At least one heatmap file is required when marking as Done", variant: "destructive" });
-        return;
-      }
-      if (!completeFloors.trim()) {
-        toast({ title: "Validation Error", description: "No. of Floors is required when marking as Done", variant: "destructive" });
-        return;
-      }
-      if (!completeFloorSize.trim()) {
-        toast({ title: "Validation Error", description: "Floor Size is required when marking as Done", variant: "destructive" });
-        return;
-      }
-    }
-
     try {
-      let uploadedUrls: string[] = [];
-      // If marking as Done and files selected, upload to heatmaps bucket
-      if (editStatus === 'Done' && completeFiles.length > 0) {
-        for (const file of completeFiles) {
-          const ext = file.name.split('.').pop();
-          const safeCode = (editingAssignment.store_code || 'site').replace(/[^a-zA-Z0-9_-]/g, '_');
-          const fileName = `${safeCode}_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-          const path = `${editingAssignment.id}/${fileName}`;
-          const { error: upErr } = await supabase.storage
-            .from('heatmaps')
-            .upload(path, file);
-          if (upErr) throw upErr;
-          const { data: { publicUrl } } = supabase.storage
-            .from('heatmaps')
-            .getPublicUrl(path);
-          uploadedUrls.push(publicUrl);
-        }
-      }
-
       const updateData: any = {
-        deadline_at: new Date(editDeadline).toISOString(),
-        status: editStatus,
-        aps_needed: parseInt(editApsNeeded),
-        remarks: editRemarks || null,
+        assigned_to: editAssignedEngineer,
         updated_at: new Date().toISOString()
       };
-
-      // When marking as Done, always set completion fields (already validated above)
-      if (editStatus === 'Done') {
-        updateData.floors = parseInt(completeFloors);
-        updateData.floor_size = completeFloorSize;
-        updateData.heatmap_files = uploadedUrls;
-        updateData.completed_at = new Date().toISOString();
-      } else {
-        // Preserve existing values if not Done
-        updateData.floors = completeFloors ? parseInt(completeFloors) : editingAssignment.floors;
-        updateData.floor_size = completeFloorSize || editingAssignment.floor_size;
-        updateData.heatmap_files = editingAssignment.heatmap_files;
-        updateData.completed_at = editingAssignment.completed_at;
-      }
 
       const { error } = await supabase
         .from('site_assignments')
@@ -435,7 +392,7 @@ export default function LoadSite() {
 
       toast({
         title: "Success",
-        description: "Assignment updated successfully"
+        description: "Engineer reassigned successfully"
       });
 
       setIsEditOpen(false);
@@ -771,66 +728,60 @@ export default function LoadSite() {
               </div>
             </div>
 
-            {/* Row 3: Floor Map Upload */}
-            <div className="space-y-2">
-              <Label htmlFor="floorMap" className="text-xs">Upload Floor Map *</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="floorMap"
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.dwg"
-                  onChange={(e) => setFloorMapFile(e.target.files?.[0] || null)}
-                  className="cursor-pointer h-9 text-sm"
-                />
-                <UploadIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-              </div>
-              {floorMapFile && (
-                <p className="text-[10px] text-muted-foreground">
-                  {floorMapFile.name}
-                </p>
-              )}
-            </div>
-
-            {/* Row 4: Assign User */}
+            {/* Row 3: Assign User */}
             <div className="space-y-2">
               <Label className="text-xs">Assign to Engineering User *</Label>
               <div className="relative">
                 <Input
-                  placeholder="Type name or email (min 2 chars)..."
+                  placeholder="Type name or email (e.g., 'su' for Suresh)..."
                   value={userSearchQuery}
                   onChange={(e) => {
                     setUserSearchQuery(e.target.value);
                     setShowUserSuggestions(e.target.value.length >= 2);
                   }}
                   onFocus={() => setShowUserSuggestions(userSearchQuery.length >= 2)}
+                  onBlur={() => setTimeout(() => setShowUserSuggestions(false), 200)}
                   className="h-9 text-sm"
+                  autoComplete="off"
                 />
-                {showUserSuggestions && filteredUsers.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto">
-                    {filteredUsers.map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        className="w-full px-3 py-2 text-left hover:bg-accent flex items-start gap-2 border-b last:border-0"
-                        onClick={() => {
-                          setAssignedUserId(u.id);
-                          setUserSearchQuery(u.full_name || u.email);
-                          setShowUserSuggestions(false);
-                        }}
-                      >
-                        <UserPlus className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium text-sm">{u.full_name || u.email}</span>
-                          {u.full_name && <span className="text-xs text-muted-foreground">{u.email}</span>}
-                        </div>
-                      </button>
-                    ))}
+                {showUserSuggestions && userSearchQuery.length >= 2 && (
+                  <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                    {filteredUsers.length > 0 ? (
+                      filteredUsers.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          className="w-full px-3 py-2 text-left hover:bg-blue-50 dark:hover:bg-gray-700 flex items-start gap-2 border-b border-gray-100 dark:border-gray-700 last:border-0 transition-colors"
+                          onClick={() => {
+                            setAssignedUserId(u.id);
+                            setUserSearchQuery(u.full_name || u.email);
+                            setShowUserSuggestions(false);
+                          }}
+                        >
+                          <UserPlus className="h-4 w-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+                          <div className="flex flex-col flex-1">
+                            <span className="font-medium text-sm text-gray-900 dark:text-gray-100">{u.full_name || u.email}</span>
+                            {u.full_name && <span className="text-xs text-gray-500 dark:text-gray-400">{u.email}</span>}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                        <div className="mb-1">No engineering users found</div>
+                        <div className="text-xs">Make sure users have department = 'Engineering' in profiles</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {userSearchQuery.length > 0 && userSearchQuery.length < 2 && (
+                  <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Type at least 2 characters to search...
                   </div>
                 )}
               </div>
               {selectedUser && (
-                <div className="text-xs text-muted-foreground mt-1 p-2 bg-muted rounded">
-                  Assigned: <span className="font-medium text-foreground">{selectedUser.full_name || selectedUser.email}</span>
+                <div className="text-xs text-muted-foreground mt-1 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded">
+                  ✓ Assigned: <span className="font-medium text-green-700 dark:text-green-400">{selectedUser.full_name || selectedUser.email}</span>
                 </div>
               )}
             </div>
@@ -846,8 +797,10 @@ export default function LoadSite() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Upcoming Site Loads</CardTitle>
-          <CardDescription>Nearest deadlines first</CardDescription>
+          <div>
+            <CardTitle>Upcoming Site Loads</CardTitle>
+            <CardDescription>Nearest deadlines first</CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           {/* Filters */}
@@ -990,108 +943,47 @@ export default function LoadSite() {
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Edit Assignment</DialogTitle>
+            <DialogTitle>Reassign Engineer</DialogTitle>
             <DialogDescription>
-              Update deadline, status, APs needed, and remarks. If completing, add final heatmap files and details.
+              Change the assigned engineer for this site loading task.
             </DialogDescription>
           </DialogHeader>
           {editingAssignment && (
             <form onSubmit={handleUpdateAssignment} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="editDeadline">Deadline</Label>
-                <Input
-                  id="editDeadline"
-                  type="datetime-local"
-                  value={editDeadline}
-                  onChange={(e) => setEditDeadline(e.target.value)}
-                  required
-                />
+              <div className="space-y-2 p-3 bg-muted rounded-md">
+                <div className="text-sm">
+                  <span className="font-medium">Site:</span> {editingAssignment.store_code}
+                </div>
+                <div className="text-sm">
+                  <span className="font-medium">City:</span> {editingAssignment.city}
+                </div>
+                <div className="text-sm">
+                  <span className="font-medium">Status:</span> {editingAssignment.status}
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="editStatus">Status</Label>
-                <Select value={editStatus} onValueChange={(value: any) => setEditStatus(value)}>
-                  <SelectTrigger id="editStatus">
-                    <SelectValue />
+                <Label htmlFor="editAssignedEngineer">Assigned Engineer <span className="text-red-500">*</span></Label>
+                <Select value={editAssignedEngineer} onValueChange={setEditAssignedEngineer}>
+                  <SelectTrigger id="editAssignedEngineer">
+                    <SelectValue placeholder="Select an engineer" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="In Progress">In Progress</SelectItem>
-                    <SelectItem value="Done">Done</SelectItem>
-                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    {engineeringUsers.map((eng) => (
+                      <SelectItem key={eng.id} value={eng.id}>
+                        {eng.full_name || eng.email}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="editApsNeeded">APs Needed <span className="text-red-500">*</span></Label>
-                <Input
-                  id="editApsNeeded"
-                  type="number"
-                  value={editApsNeeded}
-                  onChange={(e) => setEditApsNeeded(e.target.value)}
-                  placeholder="Enter number of APs"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="editRemarks">Remarks</Label>
-                <Textarea
-                  id="editRemarks"
-                  value={editRemarks}
-                  onChange={(e) => setEditRemarks(e.target.value)}
-                  placeholder="Add any remarks or notes..."
-                  rows={3}
-                />
-              </div>
-
-              {editStatus === 'Done' && (
-                <div className="space-y-4 border-t pt-4">
-                  <div>
-                    <Label>Upload Created Heatmap (multiple files) <span className="text-red-500">*</span></Label>
-                    <Input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg,.zip"
-                      multiple
-                      onChange={(e) => setCompleteFiles(Array.from(e.target.files || []))}
-                      required
-                    />
-                    {completeFiles.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">{completeFiles.length} file(s) selected</p>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label>No. of Floors <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={completeFloors}
-                        onChange={(e) => setCompleteFloors(e.target.value)}
-                        placeholder="e.g., 3"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Floor Size <span className="text-red-500">*</span></Label>
-                      <Input
-                        value={completeFloorSize}
-                        onChange={(e) => setCompleteFloorSize(e.target.value)}
-                        placeholder="e.g., 12,000 sqft"
-                        required
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
 
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>
                   Cancel
                 </Button>
                 <Button type="submit">
-                  {editStatus === 'Done' ? 'Complete Assignment' : 'Update Assignment'}
+                  Update Engineer
                 </Button>
               </div>
             </form>
@@ -1101,7 +993,7 @@ export default function LoadSite() {
 
       {/* View Details Dialog */}
       <Dialog open={isViewDetailsOpen} onOpenChange={setIsViewDetailsOpen}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assignment Details</DialogTitle>
             <DialogDescription>
@@ -1110,108 +1002,137 @@ export default function LoadSite() {
           </DialogHeader>
           {viewingAssignment && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">City</Label>
-                  <p className="font-medium">{viewingAssignment.city}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Store Code</Label>
-                  <p className="font-medium">{viewingAssignment.store_code}</p>
-                </div>
-              </div>
-
-              <div>
-                <Label className="text-muted-foreground text-xs">Site/Store</Label>
-                <p className="font-medium">{storeNameById[viewingAssignment.store_id] || '—'}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">Status</Label>
-                  <div className="mt-1">
-                    <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                      viewingAssignment.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
-                      viewingAssignment.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                      viewingAssignment.status === 'Done' ? 'bg-green-100 text-green-800' : 
-                      'bg-gray-100 text-gray-800'
-                    }`}>
-                      {viewingAssignment.status}
-                    </span>
+              {/* Basic Information */}
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-semibold text-sm mb-3">Site Information</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-xs">City</Label>
+                    <p className="font-medium">{viewingAssignment.city}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-xs">Store Code</Label>
+                    <p className="font-medium">{viewingAssignment.store_code}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-muted-foreground text-xs">Site/Store Name</Label>
+                    <p className="font-medium">{storeNameById[viewingAssignment.store_id] || '—'}</p>
                   </div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Deadline</Label>
-                  <p className="font-medium">
-                    {new Date(viewingAssignment.deadline_at).toLocaleString()}
-                  </p>
+              </div>
+
+              {/* Assignment Status */}
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-semibold text-sm mb-3">Assignment Status</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-xs">Status</Label>
+                    <div className="mt-1">
+                      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
+                        viewingAssignment.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+                        viewingAssignment.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                        viewingAssignment.status === 'Done' ? 'bg-green-100 text-green-800' : 
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {viewingAssignment.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-xs">Deadline</Label>
+                    <p className="font-medium">
+                      {new Date(viewingAssignment.deadline_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground text-xs">Assigned To</Label>
+                    <p className="font-medium">{userLabelById[viewingAssignment.assigned_to] || '—'}</p>
+                  </div>
+                  {viewingAssignment.assigned_by && (
+                    <div>
+                      <Label className="text-muted-foreground text-xs">Assigned By</Label>
+                      <p className="font-medium">{userLabelById[viewingAssignment.assigned_by] || '—'}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div>
-                <Label className="text-muted-foreground text-xs">Assigned To</Label>
-                <p className="font-medium">{userLabelById[viewingAssignment.assigned_to] || '—'}</p>
+              {/* Requirements */}
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-semibold text-sm mb-3">Requirements</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground text-xs">APs Needed</Label>
+                    <p className="font-medium text-lg">{viewingAssignment.aps_needed ?? '—'}</p>
+                  </div>
+                  {(viewingAssignment.floors || viewingAssignment.floor_size) && (
+                    <>
+                      <div>
+                        <Label className="text-muted-foreground text-xs">No. of Floors</Label>
+                        <p className="font-medium">{viewingAssignment.floors ?? '—'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-muted-foreground text-xs">Floor Size</Label>
+                        <p className="font-medium">{viewingAssignment.floor_size || '—'}</p>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
-              {viewingAssignment.assigned_by && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Assigned By</Label>
-                  <p className="font-medium">{userLabelById[viewingAssignment.assigned_by] || '—'}</p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">APs Needed</Label>
-                  <p className="font-medium">{viewingAssignment.aps_needed ?? '—'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Floor Map</Label>
+              {/* Floor Plan */}
+              {viewingAssignment.floor_map_url && (
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-sm mb-3">Floor Plan</h4>
                   <a 
                     href={viewingAssignment.floor_map_url} 
                     target="_blank" 
                     rel="noreferrer" 
-                    className="text-primary hover:underline font-medium"
+                    className="inline-flex items-center gap-2 text-primary hover:underline font-medium"
                   >
+                    <Upload className="h-4 w-4" />
                     View Floor Plan
                   </a>
                 </div>
-              </div>
-
-              {(viewingAssignment.floors || viewingAssignment.floor_size) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground text-xs">No. of Floors</Label>
-                    <p className="font-medium">{viewingAssignment.floors ?? '—'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground text-xs">Floor Size</Label>
-                    <p className="font-medium">{viewingAssignment.floor_size || '—'}</p>
-                  </div>
-                </div>
               )}
 
+              {/* Created Heatmaps */}
               {Array.isArray(viewingAssignment.heatmap_files) && viewingAssignment.heatmap_files.length > 0 && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Created Heatmaps</Label>
-                  <div className="mt-2 space-y-1">
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-sm mb-3">Created Heatmaps</h4>
+                  <div className="space-y-2">
                     {viewingAssignment.heatmap_files.map((url, idx) => (
-                      <a key={idx} href={url} target="_blank" rel="noreferrer" className="block text-primary hover:underline text-sm">
-                        File {idx + 1}
+                      <a 
+                        key={idx} 
+                        href={url} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="flex items-center gap-2 text-primary hover:underline text-sm p-2 rounded hover:bg-muted"
+                      >
+                        <Upload className="h-4 w-4" />
+                        Heatmap File {idx + 1}
                       </a>
                     ))}
                   </div>
+                  {viewingAssignment.completed_at && (
+                    <div className="mt-3 pt-3 border-t">
+                      <Label className="text-muted-foreground text-xs">Completed At</Label>
+                      <p className="text-sm">{new Date(viewingAssignment.completed_at).toLocaleString()}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
+              {/* Remarks */}
               {viewingAssignment.remarks && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Remarks</Label>
-                  <p className="mt-1 p-3 bg-muted rounded-md text-sm">{viewingAssignment.remarks}</p>
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-sm mb-2">Remarks</h4>
+                  <p className="text-sm whitespace-pre-wrap">{viewingAssignment.remarks}</p>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground">
+              {/* Metadata */}
+              <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground pt-2 border-t">
                 <div>
                   <Label className="text-muted-foreground text-xs">Created At</Label>
                   <p>{new Date(viewingAssignment.created_at).toLocaleString()}</p>
@@ -1222,6 +1143,7 @@ export default function LoadSite() {
                 </div>
               </div>
 
+              {/* Actions */}
               <div className="flex justify-end gap-2 pt-4">
                 <Button variant="outline" onClick={() => setIsViewDetailsOpen(false)}>
                   Close
@@ -1230,7 +1152,7 @@ export default function LoadSite() {
                   setIsViewDetailsOpen(false);
                   handleEditAssignment(viewingAssignment);
                 }}>
-                  Edit
+                  Reassign Engineer
                 </Button>
               </div>
             </div>

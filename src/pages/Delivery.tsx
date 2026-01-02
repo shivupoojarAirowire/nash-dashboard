@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Package, Truck, CheckCircle2, Clock, Upload, Download, ArrowUpDown, ArrowUp, ArrowDown, Pencil, Trash2, X } from "lucide-react";
+import { Package, Truck, CheckCircle2, Clock, Upload, Download, ArrowUpDown, ArrowUp, ArrowDown, Pencil, Trash2, X, ExternalLink } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -44,6 +44,7 @@ type DeliveryTracking = {
   delivery_status: string;
   comments?: string;
   delivered_date?: string;
+  pod_url?: string;
   created_at: string;
   stores?: {
     city: string;
@@ -152,6 +153,7 @@ const Inventory = () => {
   
   const [deliveryTracking, setDeliveryTracking] = useState<DeliveryTracking[]>([]);
   const [loadingTracking, setLoadingTracking] = useState(true);
+  const [userDepartment, setUserDepartment] = useState<string | null>(null);
   const [sortField, setSortField] = useState<string>('created_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   
@@ -174,14 +176,32 @@ const Inventory = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<DeliveryTracking | null>(null);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [trackingItem, setTrackingItem] = useState<DeliveryTracking | null>(null);
+  const [isTracking, setIsTracking] = useState(false);
+
+  // Load user department
+  useEffect(() => {
+    const loadDepartment = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('department')
+          .eq('id', user.id)
+          .single();
+        if (data) setUserDepartment(data.department);
+      }
+    };
+    loadDepartment();
+  }, []);
 
   useEffect(() => {
-    if (!loading) {
-      if (!has('Inventory') && !has('Delivery')) {
+    if (!loading && userDepartment !== null) {
+      if (!has('Inventory') && !has('Delivery') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
         navigate('/');
       }
     }
-  }, [loading, has, navigate]);
+  }, [loading, has, navigate, userDepartment]);
 
   useEffect(() => {
     loadDeliveryTracking();
@@ -230,6 +250,142 @@ const Inventory = () => {
       });
     } finally {
       setLoadingTracking(false);
+    }
+  };
+
+  const trackDeliveryStatus = async (item: DeliveryTracking) => {
+    if (!item.consignment_number) {
+      toast({
+        title: "Missing Tracking Number",
+        description: "No consignment number available for tracking.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsTracking(true);
+    setTrackingItem(item);
+
+    try {
+      const response = await fetch('https://www.ecritica.co/eFreightLive/api/tracking.php', {
+        method: 'POST',
+        body: JSON.stringify({
+          Auth: "NjMwMzIzNzMwMzIz",
+          DocketNo: item.consignment_number
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+      }
+
+      const responseText = await response.text();
+      console.log('Raw API response:', responseText);
+      
+      let trackingData;
+      try {
+        trackingData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse JSON:', parseError);
+        throw new Error('Invalid JSON response from tracking API');
+      }
+      
+      console.log('Parsed tracking data:', trackingData);
+
+      // Extract status from API response
+      let latestStatus = null;
+      let latestRemarks = null;
+      let deliveredDate = null;
+      let podUrl = null;
+
+      // Check if response is successful
+      if (trackingData && trackingData.code === 1 && trackingData.data) {
+        const docketDetails = trackingData.data.docketDetails;
+        
+        if (docketDetails) {
+          // Check if delivered
+          if (docketDetails.DeliveredDate) {
+            latestStatus = 'Delivered';
+            latestRemarks = `Delivered on ${docketDetails.DeliveredDate}`;
+            deliveredDate = docketDetails.DeliveredDate;
+            podUrl = docketDetails.pod_url || null;
+            if (docketDetails.ReceivedBy) {
+              latestRemarks += ` | Received by: ${docketDetails.ReceivedBy}`;
+            }
+            if (docketDetails.DestinationCity) {
+              latestRemarks += ` | ${docketDetails.DestinationCity}`;
+            }
+          } 
+          // Check if in transit
+          else if (docketDetails.PickupDate) {
+            latestStatus = 'In Transit';
+            latestRemarks = `Picked up on ${docketDetails.PickupDate}`;
+            if (docketDetails.OriginCity && docketDetails.DestinationCity) {
+              latestRemarks += ` | From: ${docketDetails.OriginCity} | To: ${docketDetails.DestinationCity}`;
+            }
+            if (docketDetails.RevisedDueDate) {
+              latestRemarks += ` | Expected: ${docketDetails.RevisedDueDate}`;
+            }
+          }
+          // Pending pickup
+          else if (docketDetails.ExpectedPickupDate) {
+            latestStatus = 'Pending Pickup';
+            latestRemarks = `Expected pickup: ${docketDetails.ExpectedPickupDate}`;
+          }
+        }
+      }
+
+      // Only update if we got a valid status
+      if (!latestStatus) {
+        console.error('Could not extract status. Full response structure:', trackingData);
+        toast({
+          title: "Tracking Failed",
+          description: "Unable to extract status from API response.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      console.log('Updating to status:', latestStatus, 'remarks:', latestRemarks);
+
+      // Update delivery status in database
+      const updateData: any = {
+        delivery_status: latestStatus,
+        comments: latestRemarks
+      };
+      
+      if (deliveredDate) {
+        updateData.delivered_date = deliveredDate;
+      }
+      
+      if (podUrl) {
+        updateData.pod_url = podUrl;
+      }
+
+      const { error: updateError } = await supabase
+        .from('delivery_tracking')
+        .update(updateData)
+        .eq('id', item.id);
+
+      if (updateError) throw updateError;
+
+      // Refresh the data
+      await loadDeliveryTracking();
+
+      toast({
+        title: "Status Updated",
+        description: `Delivery status updated to: ${latestStatus}`,
+      });
+    } catch (error: any) {
+      console.error('Error tracking delivery:', error);
+      toast({
+        title: "Tracking Failed",
+        description: error.message || "Failed to track delivery status. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTracking(false);
+      setTrackingItem(null);
     }
   };
 
@@ -557,7 +713,7 @@ const Inventory = () => {
 
 
 
-  if (!loading && !has('Inventory') && !has('Delivery')) {
+  if (!loading && userDepartment !== null && !has('Inventory') && !has('Delivery') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
     return (
       <div className="p-6">
         <Card>
@@ -569,9 +725,9 @@ const Inventory = () => {
       </div>
     );
   }
-  const deliveredCount = inventory.filter((i) => i.status === "Delivered").length;
-  const inTransitCount = inventory.filter((i) => i.status === "In Transit").length;
-  const pendingCount = inventory.filter((i) => i.status === "Pending").length;
+  const deliveredCount = deliveryTracking.filter((i) => i.delivery_status === "Delivered").length;
+  const inTransitCount = deliveryTracking.filter((i) => i.delivery_status === "In Transit").length;
+  const pendingCount = deliveryTracking.filter((i) => i.delivery_status === "Pending").length;
   const { deviceDeliveries, loading: deviceLoading, setStatus } = useDeviceDeliveries();
 
   return (
@@ -714,6 +870,7 @@ const Inventory = () => {
                       <TableHead onClick={() => handleSort('delivered_date')} className="cursor-pointer hover:bg-muted/50">
                         <div className="flex items-center">DELIVERED DATE {getSortIcon('delivered_date')}</div>
                       </TableHead>
+                      <TableHead>POD</TableHead>
                       <TableHead>ACTIONS</TableHead>
                     </TableRow>
                     <TableRow>
@@ -783,6 +940,7 @@ const Inventory = () => {
                         />
                       </TableHead>
                       <TableHead></TableHead>
+                      <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -808,181 +966,30 @@ const Inventory = () => {
                         <TableCell className="max-w-xs truncate">{item.comments || '-'}</TableCell>
                         <TableCell>{item.delivered_date ? new Date(item.delivered_date).toLocaleDateString() : '-'}</TableCell>
                         <TableCell>
+                          {item.pod_url ? (
+                            <a 
+                              href={item.pod_url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              View
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
                           <div className="flex gap-2">
                             <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleEdit(item)}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => trackDeliveryStatus(item)}
+                              disabled={isTracking && trackingItem?.id === item.id}
+                              className="gap-1"
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Truck className="h-4 w-4" />
+                              {isTracking && trackingItem?.id === item.id ? 'Tracking...' : 'Track'}
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDelete(item)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Device Deliveries */}
-          <Card className="shadow-md mt-4">
-            <CardHeader>
-              <CardTitle>Device Deliveries</CardTitle>
-              <CardDescription>Delivery tracking with store and device information</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loadingTracking ? (
-                <div className="text-center py-8 text-gray-500">Loading delivery data...</div>
-              ) : deliveryTracking.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">No delivery data available. Upload CSV to add records.</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">
-                        <Checkbox
-                          checked={selectedItems.size === sortedDeliveryTracking.length && sortedDeliveryTracking.length > 0}
-                          onCheckedChange={toggleSelectAll}
-                        />
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('sr_no')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">SR. NO {getSortIcon('sr_no')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('pickup_date')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">PICKUP DATE {getSortIcon('pickup_date')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('consignment_number')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">CONSIGNMENT NUMBER {getSortIcon('consignment_number')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('invoice_dc_no')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">INVOICE / DC No. {getSortIcon('invoice_dc_no')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('store_code')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">STORE CODE {getSortIcon('store_code')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('city')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">CITY {getSortIcon('city')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('store')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">STORE NAME {getSortIcon('store')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('delivery_status')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">DELIVERY STATUS {getSortIcon('delivery_status')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('comments')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">COMMENTS {getSortIcon('comments')}</div>
-                      </TableHead>
-                      <TableHead onClick={() => handleSort('delivered_date')} className="cursor-pointer hover:bg-muted/50">
-                        <div className="flex items-center">DELIVERED DATE {getSortIcon('delivered_date')}</div>
-                      </TableHead>
-                      <TableHead>ACTIONS</TableHead>
-                    </TableRow>
-                    <TableRow>
-                      <TableHead></TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.sr_no}
-                          onChange={(e) => setFilters({ ...filters, sr_no: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          type="date"
-                          value={filters.pickup_date}
-                          onChange={(e) => setFilters({ ...filters, pickup_date: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.consignment_number}
-                          onChange={(e) => setFilters({ ...filters, consignment_number: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.invoice_dc_no}
-                          onChange={(e) => setFilters({ ...filters, invoice_dc_no: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.store_code}
-                          onChange={(e) => setFilters({ ...filters, store_code: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead></TableHead>
-                      <TableHead></TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.delivery_status}
-                          onChange={(e) => setFilters({ ...filters, delivery_status: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          placeholder="Filter..."
-                          value={filters.comments}
-                          onChange={(e) => setFilters({ ...filters, comments: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead>
-                        <Input
-                          type="date"
-                          value={filters.delivered_date}
-                          onChange={(e) => setFilters({ ...filters, delivered_date: e.target.value })}
-                          className="h-8"
-                        />
-                      </TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedDeliveryTracking.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedItems.has(item.id)}
-                            onCheckedChange={() => toggleSelectItem(item.id)}
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{item.sr_no}</TableCell>
-                        <TableCell>{item.pickup_date ? new Date(item.pickup_date).toLocaleDateString() : '-'}</TableCell>
-                        <TableCell className="font-mono text-sm">{item.consignment_number}</TableCell>
-                        <TableCell>{item.invoice_dc_no}</TableCell>
-                        <TableCell className="font-medium">{item.store_code}</TableCell>
-                        <TableCell>{item.stores?.city || '-'}</TableCell>
-                        <TableCell>{item.stores?.store || '-'}</TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusVariant(item.delivery_status)} className="flex items-center gap-1 w-fit">
-                            {getStatusIcon(item.delivery_status)}
-                            {item.delivery_status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate">{item.comments || '-'}</TableCell>
-                        <TableCell>{item.delivered_date ? new Date(item.delivered_date).toLocaleDateString() : '-'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
                             <Button
                               variant="ghost"
                               size="icon"

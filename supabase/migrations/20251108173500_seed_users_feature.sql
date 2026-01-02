@@ -8,7 +8,7 @@ on conflict (feature_name) do update set enabled = excluded.enabled;
 insert into user_feature_access (user_id, feature_name, enabled)
 select distinct ur.user_id, 'Users' as feature_name, true as enabled
 from user_roles ur
-where ur.role in ('admin','manager')
+where ur.role = ANY(ARRAY['admin'::public.app_role,'manager'::public.app_role])
 and not exists (
   select 1 from user_feature_access u
   where u.user_id = ur.user_id and u.feature_name = 'Users'

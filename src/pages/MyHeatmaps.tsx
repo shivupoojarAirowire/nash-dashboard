@@ -16,7 +16,6 @@ interface AssignmentRow {
   city: string;
   store_id: string;
   store_code: string;
-  floor_map_url: string;
   deadline_at: string;
   status: 'Pending' | 'In Progress' | 'Done' | 'Cancelled';
   assigned_by: string | null;
@@ -26,6 +25,10 @@ interface AssignmentRow {
   floors?: number | null;
   floor_size?: string | null;
   heatmap_files?: string[] | null;
+  stores?: {
+    floor_plan_files?: Array<{name: string; path: string; url: string}>;
+    has_floor_plan?: boolean;
+  };
 }
 
 export default function MyHeatmaps() {
@@ -105,7 +108,7 @@ export default function MyHeatmaps() {
       if (!userId) return;
       const { data, error } = await supabase
         .from('site_assignments')
-        .select('id, city, store_id, store_code, floor_map_url, deadline_at, status, assigned_by, aps_needed, remarks, completed_at, floors, floor_size, heatmap_files')
+        .select('id, city, store_id, store_code, deadline_at, status, assigned_by, aps_needed, remarks, completed_at, floors, floor_size, heatmap_files, stores(floor_plan_files, has_floor_plan)')
         .eq('assigned_to', userId)
         .order('deadline_at', { ascending: true });
       if (error) throw error;
@@ -295,20 +298,31 @@ export default function MyHeatmaps() {
                       </TableCell>
                       <TableCell className="min-w-[140px]">{assigner}</TableCell>
                       <TableCell>
-                        <a href={r.floor_map_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">View</a>
+                        {r.stores?.has_floor_plan && r.stores?.floor_plan_files && r.stores.floor_plan_files.length > 0 ? (
+                          <a 
+                            href={r.stores.floor_plan_files[0].url} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-primary hover:underline"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        {r.status !== 'Done' && r.status !== 'Cancelled' && (
+                        {r.status.toLowerCase() !== 'done' && r.status.toLowerCase() !== 'cancelled' && (
                           <div className="flex gap-2">
-                            {r.status === 'Pending' && (
+                            {r.status.toLowerCase() === 'pending' && (
                               <Button size="sm" variant="outline" onClick={() => updateStatus(r.id, 'In Progress')}>Start</Button>
                             )}
-                            {r.status === 'In Progress' && (
+                            {r.status.toLowerCase() === 'in progress' && (
                               <Button size="sm" variant="default" onClick={() => openCompletion(r)}>Complete</Button>
                             )}
                           </div>
                         )}
-                        {r.status === 'Done' && r.completed_at && (
+                        {r.status.toLowerCase() === 'done' && r.completed_at && (
                           <span className="text-xs text-muted-foreground">Done: {new Date(r.completed_at).toLocaleDateString()}</span>
                         )}
                       </TableCell>

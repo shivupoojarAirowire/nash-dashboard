@@ -32,7 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { User, Users as UsersIcon, Pencil, Trash2 } from "lucide-react";
+import { User, Users as UsersIcon, Pencil, Trash2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { FeatureManagement } from "@/components/FeatureManagement";
@@ -74,6 +74,7 @@ export default function Users() {
   
   const [selectedRoles, setSelectedRoles] = useState<SelectedRole[]>(["user"]);
   const [activeTab, setActiveTab] = useState<"internal" | "external">("internal");
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -81,15 +82,22 @@ export default function Users() {
 
   async function loadUsers() {
     try {
+      // Directly query profiles table - all authenticated users can see all profiles
+      console.log('[Users] Querying profiles table...');
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('*');
+      
+      console.log('[Users] Profiles fetched:', profiles?.length ?? 0, 'Error:', profilesError);
       if (profilesError) throw profilesError;
 
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
         .select('user_id, role');
       if (rolesError) throw rolesError;
+
+      console.log('[Users] Roles fetched:', roles?.length ?? 0);
+      console.log('[Users] Profiles:', profiles);
 
       const usersWithRoles: UserProfile[] = (profiles || []).map((profile: any) => ({
         id: profile.id,
@@ -101,6 +109,7 @@ export default function Users() {
           .filter((r: any) => r.user_id === profile.id)
           .map((r: any) => r.role as SelectedRole),
       }));
+      console.log('[Users] Final usersWithRoles array:', usersWithRoles);
       setUsers(usersWithRoles);
     } catch (error: any) {
       console.error('Error loading users:', error);
@@ -315,6 +324,25 @@ export default function Users() {
     gate();
   }, [currentUser, navigate, toast]);
 
+  // Helper function to get users for a specific role
+  const getUsersByRole = (role: string): UserProfile[] => {
+    return users.filter((user) => user.roles.includes(role as any));
+  };
+
+  // Get all unique roles present in the system
+  const allRoles = Array.from(new Set(users.flatMap((u) => u.roles)));
+
+  // Count users by role
+  const roleStats = allRoles.map((role) => ({
+    role,
+    count: getUsersByRole(role).length,
+    isInternal: internalRoles.includes(role as InternalRole),
+  }));
+
+  // Separate internal and external roles
+  const internalRoleStats = roleStats.filter((r) => r.isInternal);
+  const externalRoleStats = roleStats.filter((r) => !r.isInternal);
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
@@ -334,34 +362,105 @@ export default function Users() {
       {/* Feature Management Section */}
       <FeatureManagement />
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "internal" | "external")} className="w-full">
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="internal">Internal Users</TabsTrigger>
-          <TabsTrigger value="external">External Users</TabsTrigger>
-        </TabsList>
+      {/* Role-wise Dashboard - Show when no role is selected */}
+      {!selectedRoleFilter && (
+        <div className="space-y-6">
+          {/* Internal Roles Dashboard */}
+          {internalRoleStats.length > 0 && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-2xl font-bold">Internal Users</h2>
+                <p className="text-muted-foreground text-sm">Manage internal staff by role</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {internalRoleStats.map(({ role, count }) => (
+                  <Card
+                    key={role}
+                    className="cursor-pointer hover:shadow-lg transition-shadow"
+                    onClick={() => setSelectedRoleFilter(role)}
+                  >
+                    <CardHeader className="pb-3">
+                      <CardTitle className="capitalize">{role}</CardTitle>
+                      <CardDescription>Click to view users</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{count}</div>
+                      <p className="text-sm text-muted-foreground">user{count !== 1 ? 's' : ''}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
-        <TabsContent value="internal">
+          {/* External Roles Dashboard */}
+          {externalRoleStats.length > 0 && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-2xl font-bold">External Users</h2>
+                <p className="text-muted-foreground text-sm">Manage external users by role</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {externalRoleStats.map(({ role, count }) => (
+                  <Card
+                    key={role}
+                    className="cursor-pointer hover:shadow-lg transition-shadow"
+                    onClick={() => setSelectedRoleFilter(role)}
+                  >
+                    <CardHeader className="pb-3">
+                      <CardTitle className="capitalize">{role.replace('-', ' ')}</CardTitle>
+                      <CardDescription>Click to view users</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{count}</div>
+                      <p className="text-sm text-muted-foreground">user{count !== 1 ? 's' : ''}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* User List - Show when a role is selected */}
+      {selectedRoleFilter && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedRoleFilter(null)}
+              className="gap-1"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </Button>
+          </div>
           <Card>
             <CardHeader>
-              <CardTitle>Internal Users</CardTitle>
-              <CardDescription>Manage internal staff (Admin, Manager, User)</CardDescription>
+              <CardTitle className="capitalize">
+                {selectedRoleFilter} Users
+              </CardTitle>
+              <CardDescription>
+                Manage {getUsersByRole(selectedRoleFilter).length} user(s) with the {selectedRoleFilter} role
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users
-                    .filter((user) => user.roles.some((r) => internalRoles.includes(r as InternalRole)))
-                    .map((user) => (
+              {getUsersByRole(selectedRoleFilter).length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Department</TableHead>
+                      <TableHead>Roles</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {getUsersByRole(selectedRoleFilter).map((user) => (
                       <TableRow key={user.id}>
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-2">
@@ -405,82 +504,24 @@ export default function Users() {
                         </TableCell>
                       </TableRow>
                     ))}
-                </TableBody>
-              </Table>
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-muted-foreground text-center py-8">No users found with this role</p>
+              )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      )}
 
-        <TabsContent value="external">
-          <Card>
-            <CardHeader>
-              <CardTitle>External Users</CardTitle>
-              <CardDescription>Manage external users (Vendor, Customer, ISP-Vendor)</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users
-                    .filter((user) => user.roles.some((r) => externalRoles.includes(r as ExternalRole)))
-                    .map((user) => (
-                      <TableRow key={user.id}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            {user.full_name || "Unnamed"}
-                          </div>
-                        </TableCell>
-                        <TableCell>{user.email}</TableCell>
-                        <TableCell>{user.department || "-"}</TableCell>
-                        <TableCell>
-                          {user.roles.map((role) => (
-                            <Badge key={role} variant="outline" className="mr-1">
-                              {role.replace('-', ' ')}
-                            </Badge>
-                          ))}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={user.enabled ? "default" : "destructive"}>
-                            {user.enabled ? "Active" : "Disabled"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditClick(user)}
-                              className="h-8 w-8 p-0"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteClick(user)}
-                              className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "internal" | "external")} className="w-full">
+        <TabsList className="w-full justify-start">
+          <TabsTrigger value="internal">Internal Users</TabsTrigger>
+          <TabsTrigger value="external">External Users</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="internal"></TabsContent>
+        <TabsContent value="external"></TabsContent>
       </Tabs>
 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>

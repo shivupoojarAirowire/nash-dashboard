@@ -4,9 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Settings, Wrench, Eye } from "lucide-react";
+import { Settings, Wrench, Eye, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getInventory } from "@/integrations/supabase/inventory";
 import { useToast } from "@/hooks/use-toast";
@@ -18,6 +19,9 @@ type SiteAssignment = {
   status: string;
   config_status?: string | null;
   assigned_to?: string | null;
+  config_assigned_to?: string | null;
+  config_assigned_by?: string | null;
+  config_deadline_at?: string | null;
   deadline_at?: string | null;
   devicesAllocated: number;
   allocatedDevices?: InventoryItem[];
@@ -57,12 +61,15 @@ export default function DeviceConfigurations() {
   const [viewingDevices, setViewingDevices] = useState<InventoryItem[]>([]);
   const [viewConfigDialogOpen, setViewConfigDialogOpen] = useState(false);
   const [viewingConfig, setViewingConfig] = useState<SiteAssignment | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<SiteAssignment | null>(null);
 
-  useEffect(() => {
-    if (!loading && !has('Project Manager')) {
-      navigate('/');
-    }
-  }, [loading, has, navigate]);
+  // Removed permission check - allow all authenticated users
+  // useEffect(() => {
+  //   if (!loading && !has('Project Manager')) {
+  //     navigate('/');
+  //   }
+  // }, [loading, has, navigate]);
 
   useEffect(() => {
     loadSites();
@@ -74,7 +81,7 @@ export default function DeviceConfigurations() {
     try {
       const { data, error } = await supabase
         .from('site_assignments')
-        .select('id, city, store_code, status, config_status, assigned_to, deadline_at, aps_needed, firewall_ip, zonal_port_number')
+        .select('id, city, store_code, status, config_status, assigned_to, config_assigned_to, config_assigned_by, config_deadline_at, deadline_at, aps_needed, firewall_ip, zonal_port_number')
         .eq('status', 'Done')
         .order('updated_at', { ascending: false });
       if (error) throw error;
@@ -97,6 +104,9 @@ export default function DeviceConfigurations() {
           status: s.status,
           config_status: s.config_status ?? 'Not Started',
           assigned_to: s.assigned_to,
+          config_assigned_to: s.config_assigned_to,
+          config_assigned_by: s.config_assigned_by,
+          config_deadline_at: s.config_deadline_at,
           deadline_at: s.deadline_at,
           devicesAllocated: allocatedDevices.length,
           allocatedDevices: allocatedDevices,
@@ -166,8 +176,41 @@ export default function DeviceConfigurations() {
     setSelectedSite(site);
     setDialogOpen(true);
     setDeviceSelections({});
-    setSelectedEngineer(site.assigned_to || '');
-    setDeadline(site.deadline_at ? site.deadline_at.split('T')[0] : '');
+    setSelectedEngineer(site.config_assigned_to || '');
+    setDeadline(site.config_deadline_at ? site.config_deadline_at.split('T')[0] : '');
+  };
+
+  const handleDeleteConfiguration = async () => {
+    if (!siteToDelete) return;
+
+    try {
+      const { error } = await supabase
+        .from('site_assignments')
+        .update({
+          config_assigned_to: null,
+          config_assigned_by: null,
+          config_deadline_at: null,
+          config_status: 'Not Started'
+        })
+        .eq('id', siteToDelete.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Configuration assignment deleted successfully"
+      });
+
+      setDeleteDialogOpen(false);
+      setSiteToDelete(null);
+      await loadSites();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete configuration",
+        variant: "destructive"
+      });
+    }
   };
 
   const toggleDeviceSelection = (serial: string) => {
@@ -196,12 +239,18 @@ export default function DeviceConfigurations() {
     }
     
     try {
-      // Update engineer & deadline
+      // Get current user for config_assigned_by
+      const { data: authData } = await supabase.auth.getUser();
+      const assignedBy = authData?.user?.id || null;
+      
+      // Update config engineer & deadline
       const { error: updErr } = await supabase
         .from('site_assignments')
         .update({
-          assigned_to: selectedEngineer,
-          deadline_at: new Date(deadline).toISOString()
+          config_assigned_to: selectedEngineer,
+          config_assigned_by: assignedBy,
+          config_deadline_at: new Date(deadline).toISOString(),
+          config_status: 'Not Started'
         })
         .eq('id', selectedSite.id);
       
@@ -226,18 +275,19 @@ export default function DeviceConfigurations() {
     }
   };
 
-  if (!loading && !has('Project Manager')) {
-    return (
-      <div className="p-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Access Restricted</CardTitle>
-            <CardDescription>The Project Manager feature is disabled for your account.</CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
-  }
+  // Removed access restriction - allow all authenticated users
+  // if (!loading && !has('Project Manager')) {
+  //   return (
+  //     <div className="p-6">
+  //       <Card>
+  //         <CardHeader>
+  //           <CardTitle>Access Restricted</CardTitle>
+  //           <CardDescription>The Project Manager feature is disabled for your account.</CardDescription>
+  //         </CardHeader>
+  //       </Card>
+  //     </div>
+  //   );
+  // }
 
   return (
     <div className="p-6">
@@ -266,7 +316,7 @@ export default function DeviceConfigurations() {
                 <TableHead>Engineer</TableHead>
                 <TableHead>Config Status</TableHead>
                 <TableHead>Deadline</TableHead>
-                <TableHead></TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -316,7 +366,7 @@ export default function DeviceConfigurations() {
                       </Button>
                     )}
                   </TableCell>
-                  <TableCell>{engineers.find((e) => e.id === s.assigned_to)?.email || '-'}</TableCell>
+                  <TableCell>{engineers.find((e) => e.id === s.config_assigned_to)?.email || '-'}</TableCell>
                   <TableCell>
                     <Badge 
                       className={
@@ -330,42 +380,84 @@ export default function DeviceConfigurations() {
                       {s.config_status || 'Not Started'}
                     </Badge>
                   </TableCell>
-                  <TableCell>{s.deadline_at ? s.deadline_at.split('T')[0] : '-'}</TableCell>
+                  <TableCell>{s.config_deadline_at ? s.config_deadline_at.split('T')[0] : '-'}</TableCell>
                   <TableCell>
-                    {s.config_status === 'Completed' ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setViewingConfig(s);
-                          setViewConfigDialogOpen(true);
-                        }}
-                      >
-                        <Eye className="h-4 w-4 mr-1" />
-                        View
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => openDialogForSite(s)}
-                      >
-                        {s.assigned_to ? 'Reassign' : 'Assign'}
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {s.config_status === 'Completed' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setViewingConfig(s);
+                            setViewConfigDialogOpen(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openDialogForSite(s)}
+                          >
+                            {s.config_assigned_to ? (
+                              <>
+                                <Pencil className="h-4 w-4 mr-1" />
+                                Edit
+                              </>
+                            ) : (
+                              'Assign'
+                            )}
+                          </Button>
+                          {s.config_assigned_to && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setSiteToDelete(s);
+                                setDeleteDialogOpen(true);
+                              }}
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          {sites.length === 0 && <div className="text-sm text-muted-foreground mt-2">No completed sites yet.</div>}
+          {sites.length === 0 && (
+            <div className="text-center py-12">
+              <Settings className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Completed Heatmaps</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Sites will appear here once their heatmaps are marked as "Done" in the HeatMaps section.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Once a heatmap is completed, you can assign engineers to configure devices for that site.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Assign Site {selectedSite?.store_code}</DialogTitle>
-            <DialogDescription>Assign an engineer and allocate inventory devices.</DialogDescription>
+            <DialogTitle>
+              {selectedSite?.config_assigned_to ? 'Edit' : 'Assign'} Device Configuration - {selectedSite?.store_code}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedSite?.config_assigned_to 
+                ? 'Update the assigned engineer and deadline for device configuration.' 
+                : 'Assign an engineer and set deadline for device configuration.'}
+            </DialogDescription>
           </DialogHeader>
           {selectedSite && (
             <div className="space-y-6">
@@ -537,6 +629,30 @@ export default function DeviceConfigurations() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Configuration Assignment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the engineer assignment and reset the configuration status for site <strong>{siteToDelete?.store_code}</strong>. 
+              The site will remain in the list and can be reassigned later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setSiteToDelete(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteConfiguration}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

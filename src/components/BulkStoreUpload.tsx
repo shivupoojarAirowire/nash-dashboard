@@ -87,7 +87,7 @@ export function BulkStoreUpload() {
         poc: "CONTACT_PERSON",
         pocNo: "CONTACT_NUMBER",
         priority: "High/Medium/Low",
-        siteReadiness: "Ready/Not Ready/Partial",
+        siteReadiness: "Existing site/New site",
       },
     ];
 
@@ -105,16 +105,29 @@ export function BulkStoreUpload() {
 
     setIsSubmitting(true);
     try {
-      const storesToAdd = uploadedStores.map(store => ({
-        city: store.city.toUpperCase(),
-        store: store.store,
-        store_code: store.storeCode,
-        address: store.address || null,
-        poc: store.poc || null,
-        poc_no: store.pocNo || null,
-        priority: (store.priority || "Medium") as "High" | "Medium" | "Low",
-        site_readiness: (store.siteReadiness || "Not Ready") as "Ready" | "Not Ready" | "Partial"
-      }));
+      const storesToAdd = uploadedStores.map(store => {
+        // Map site_readiness values to valid constraint values
+        let siteReadiness: "Existing site" | "New site" = "Existing site";
+        const value = (store.siteReadiness || "").trim().toLowerCase();
+        
+        // Map various input formats to valid values
+        if (value.includes("new")) {
+          siteReadiness = "New site";
+        } else {
+          siteReadiness = "Existing site";
+        }
+        
+        return {
+          city: store.city.toUpperCase(),
+          store: store.store,
+          store_code: store.storeCode,
+          address: store.address || null,
+          poc: store.poc || null,
+          poc_no: store.pocNo || null,
+          priority: (store.priority || "Medium") as "High" | "Medium" | "Low",
+          site_readiness: siteReadiness
+        };
+      });
 
       await bulkAddStores(storesToAdd);
       toast({

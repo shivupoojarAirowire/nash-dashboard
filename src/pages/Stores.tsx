@@ -25,15 +25,19 @@ const Stores: React.FC = () => {
     const load = async () => {
       try {
         const data = await getStores();
-        if (data && data.length) setStores(data as StoreRow[]);
-        else setStores([]);
+        setStores(data as StoreRow[] || []);
       } catch (e) {
-        console.warn("Failed to load stores", e);
+        console.error("Failed to load stores", e);
+        toast({
+          title: "Error",
+          description: "Failed to load stores from database",
+          variant: "destructive"
+        });
         setStores([]);
       }
     };
     load();
-  }, []);
+  }, [toast]);
 
 
 

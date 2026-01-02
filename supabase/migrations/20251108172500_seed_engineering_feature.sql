@@ -6,7 +6,7 @@ where not exists (select 1 from public.feature_access where feature_name = 'Engi
 insert into public.user_feature_access (user_id, feature_name, enabled)
 select ur.user_id, 'Engineering', true
 from public.user_roles ur
-where ur.role in ('admin','manager')
+where ur.role = ANY(ARRAY['admin'::public.app_role,'manager'::public.app_role])
 and not exists (
   select 1 from public.user_feature_access ufa
   where ufa.user_id = ur.user_id and ufa.feature_name = 'Engineering'

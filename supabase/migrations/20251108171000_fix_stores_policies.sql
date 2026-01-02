@@ -3,6 +3,10 @@
 drop policy if exists "Allow read access to authenticated users" on public.stores;
 drop policy if exists "Allow insert access to authenticated users" on public.stores;
 drop policy if exists "Allow update access to authenticated users" on public.stores;
+drop policy if exists "Authenticated users can read stores" on public.stores;
+drop policy if exists "Admins and managers can insert stores" on public.stores;
+drop policy if exists "Admins and managers can update stores" on public.stores;
+drop policy if exists "Admins can delete stores" on public.stores;
 
 -- Create new comprehensive policies
 
@@ -13,17 +17,14 @@ create policy "Authenticated users can read stores"
   to authenticated
   using (true);
 
--- Admins and managers can insert stores
+-- Admins and managers can insert stores - use has_role function with explicit ENUM cast
 create policy "Admins and managers can insert stores"
   on public.stores
   for insert
   to authenticated
   with check (
-    exists (
-      select 1 from public.user_roles ur 
-      where ur.user_id = auth.uid() 
-      and ur.role in ('admin', 'manager')
-    )
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role)
   );
 
 -- Admins and managers can update stores
@@ -32,18 +33,12 @@ create policy "Admins and managers can update stores"
   for update
   to authenticated
   using (
-    exists (
-      select 1 from public.user_roles ur 
-      where ur.user_id = auth.uid() 
-      and ur.role in ('admin', 'manager')
-    )
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role)
   )
   with check (
-    exists (
-      select 1 from public.user_roles ur 
-      where ur.user_id = auth.uid() 
-      and ur.role in ('admin', 'manager')
-    )
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role)
   );
 
 -- Admins can delete stores
@@ -52,9 +47,5 @@ create policy "Admins can delete stores"
   for delete
   to authenticated
   using (
-    exists (
-      select 1 from public.user_roles ur 
-      where ur.user_id = auth.uid() 
-      and ur.role = 'admin'
-    )
+    public.has_role(auth.uid(), 'admin'::public.app_role)
   );

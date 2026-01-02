@@ -31,14 +31,18 @@ for each row execute function public.set_updated_at();
 alter table public.user_feature_access enable row level security;
 
 -- Policies
+-- Drop existing policies first
+drop policy if exists "user_feature_access_admin_all" on public.user_feature_access;
+drop policy if exists "user_feature_access_self_read" on public.user_feature_access;
+
 -- Admins can do anything
-create policy if not exists "user_feature_access_admin_all"
+create policy "user_feature_access_admin_all"
   on public.user_feature_access
-  using ( exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role = 'admin') )
-  with check ( exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role = 'admin') );
+  using ( public.has_role(auth.uid(), 'admin'::public.app_role) )
+  with check ( public.has_role(auth.uid(), 'admin'::public.app_role) );
 
 -- Users can read their own feature flags
-create policy if not exists "user_feature_access_self_read"
+create policy "user_feature_access_self_read"
   on public.user_feature_access for select
   using ( user_id = auth.uid() );
 

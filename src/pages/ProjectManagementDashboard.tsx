@@ -157,6 +157,7 @@ export default function ProjectManagementDashboard() {
       case 'Configuration Complete': return <CheckCircle2 className="h-4 w-4" />;
       case 'Labeling Done': return <CheckCircle2 className="h-4 w-4" />;
       case 'Ready for Shipping': return <Truck className="h-4 w-4" />;
+      default: return null;
     }
   };
 
@@ -168,6 +169,7 @@ export default function ProjectManagementDashboard() {
       case 'Configuration Complete': return 'bg-green-100 text-green-800';
       case 'Labeling Done': return 'bg-purple-100 text-purple-800';
       case 'Ready for Shipping': return 'bg-emerald-100 text-emerald-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 

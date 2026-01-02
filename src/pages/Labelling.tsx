@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getInventory } from "@/integrations/supabase/inventory";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, Package, FileText, Printer, ChevronDown } from "lucide-react";
+import html2pdf from 'html2pdf.js';
 
 type LabellingItem = {
   id: string;
@@ -34,6 +35,8 @@ type LabellingItem = {
     serial: string;
   }>;
   labeling_done: boolean;
+  delivery_challan_url?: string | null;
+  delivery_challan_number?: string | null;
 };
 
 export default function Labelling() {
@@ -42,14 +45,31 @@ export default function Labelling() {
   const { toast } = useToast();
 
   const [items, setItems] = useState<LabellingItem[]>([]);
+  const [userDepartment, setUserDepartment] = useState<string | null>(null);
   const [loadingData, setLoadingData] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
+  // Load user department
   useEffect(() => {
-    if (!loading && !has('Operations')) {
+    const loadDepartment = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('department')
+          .eq('id', user.id)
+          .single();
+        if (data) setUserDepartment(data.department);
+      }
+    };
+    loadDepartment();
+  }, []);
+
+  useEffect(() => {
+    if (!loading && userDepartment !== null && !has('Operations') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
       navigate('/');
     }
-  }, [loading, has, navigate]);
+  }, [loading, has, navigate, userDepartment]);
 
   useEffect(() => {
     loadLabellingItems();
@@ -62,7 +82,7 @@ export default function Labelling() {
       // Load site assignments with config_status='Completed'
       const { data: assignments, error: assignError } = await supabase
         .from('site_assignments')
-        .select('id, city, store_id, store_code, assigned_to, firewall_ip, zonal_port_number, config_status, labeling_done')
+        .select('id, city, store_id, store_code, assigned_to, firewall_ip, zonal_port_number, config_status, delivery_challan_url, delivery_challan_number')
         .eq('config_status', 'Completed')
         .order('created_at', { ascending: false });
 
@@ -107,7 +127,7 @@ export default function Labelling() {
       // Build labelling items list
       const labellingList: LabellingItem[] = (assignments || []).map((a: any) => {
         const allocatedDevices = (inventory || []).filter((i: any) => 
-          i.site === a.store_code && i.in_use
+          i.store_code === a.store_code && i.in_use
         ).map((i: any) => ({
           type: i.type,
           make: i.make,
@@ -128,7 +148,9 @@ export default function Labelling() {
           firewall_ip: a.firewall_ip || '-',
           zonal_port_number: a.zonal_port_number || '-',
           devices: allocatedDevices,
-          labeling_done: !!a.labeling_done
+          labeling_done: false, // Default to false since column doesn't exist yet
+          delivery_challan_url: a.delivery_challan_url,
+          delivery_challan_number: a.delivery_challan_number
         };
       });
 
@@ -144,6 +166,455 @@ export default function Labelling() {
     } finally {
       setLoadingData(false);
     }
+  };
+
+  const generateAndDownloadDeliveryChallan = async (item: LabellingItem) => {
+    try {
+      // Count devices by type
+      const deviceSummary: Record<string, { qty: number; serials: string[]; make: string }> = {};
+      
+      item.devices.forEach(device => {
+        const key = device.type;
+        if (!deviceSummary[key]) {
+          deviceSummary[key] = { qty: 0, serials: [], make: device.make };
+        }
+        deviceSummary[key].qty++;
+        deviceSummary[key].serials.push(device.serial);
+      });
+
+      const today = new Date();
+      const challanDate = today.toLocaleDateString('en-IN', { 
+        day: '2-digit', 
+        month: '2-digit', 
+        year: 'numeric' 
+      });
+      
+      // Generate unique challan number
+      const timestamp = Date.now();
+      const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const storePrefix = item.store_code.substring(0, 3).toUpperCase();
+      const challanNumber = `DC-${storePrefix}${timestamp.toString().slice(-8)}${randomSuffix}`;
+
+      // Calculate subtotal (18% IGST)
+      const subTotal = item.devices.length * 10000;
+      const igst = subTotal * 0.18;
+      const total = subTotal + igst;
+
+      // Convert number to words
+      const numberToWords = (num: number): string => {
+        const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+        const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+        const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+        
+        if (num === 0) return 'Zero';
+        if (num < 10) return ones[num];
+        if (num < 20) return teens[num - 10];
+        if (num < 100) return tens[Math.floor(num / 10)] + ' ' + ones[num % 10];
+        if (num < 1000) return ones[Math.floor(num / 100)] + ' Hundred ' + numberToWords(num % 100);
+        if (num < 100000) return numberToWords(Math.floor(num / 1000)) + ' Thousand ' + numberToWords(num % 1000);
+        return numberToWords(Math.floor(num / 100000)) + ' Lakh ' + numberToWords(num % 100000);
+      };
+
+      const amountInWords = `Indian Rupee ${numberToWords(Math.floor(total))} Only`;
+
+      // Generate HTML content
+      const deliveryChallanHTML = generateChallanHTML(item, deviceSummary, challanNumber, challanDate, subTotal, igst, total, amountInWords);
+      
+      // Create a temporary div element to hold the HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = deliveryChallanHTML;
+      
+      // Configure html2pdf options
+      const opt = {
+        margin: [8, 8, 8, 8] as [number, number, number, number],
+        filename: `Delivery_Challan_${challanNumber}_${item.store_code}.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
+      };
+
+      // Generate and download PDF directly (no storage upload)
+      html2pdf()
+        .set(opt)
+        .from(tempDiv)
+        .save();
+
+      // Store challan number in localStorage for future reference (optional)
+      const recentChallans = JSON.parse(localStorage.getItem('recent_challans') || '[]');
+      recentChallans.push({ 
+        number: challanNumber, 
+        store: item.store_code, 
+        timestamp: new Date().toISOString() 
+      });
+      localStorage.setItem('recent_challans', JSON.stringify(recentChallans.slice(-10)));
+
+      toast({
+        title: "PDF Downloaded",
+        description: `Delivery Challan #${challanNumber} downloaded to your Downloads folder.`,
+      });
+
+      console.log(`Delivery challan PDF ${challanNumber} generated and downloaded for ${item.store_code}`);
+      
+    } catch (error: any) {
+      console.error('Error generating delivery challan:', error);
+      // Show user-friendly error message
+      toast({
+        title: "Error Generating Challan",
+        description: error.message || "Failed to generate delivery challan. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const generateChallanHTML = (
+    item: LabellingItem,
+    deviceSummary: Record<string, { qty: number; serials: string[]; make: string }>,
+    challanNumber: string,
+    challanDate: string,
+    subTotal: number,
+    igst: number,
+    total: number,
+    amountInWords: string
+  ): string => {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Delivery Challan - ${challanNumber}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 8mm;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            line-height: 1.2;
+            color: #000;
+            padding: 10px;
+        }
+        .challan-container {
+            border: 2px solid #000;
+            padding: 0;
+            max-width: 100%;
+        }
+        .header-section {
+            border-bottom: 2px solid #000;
+            padding: 10px;
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+        }
+        .logo-section {
+            flex: 0 0 120px;
+        }
+        .logo {
+            color: #FF6600;
+            font-size: 22pt;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        .logo .dot {
+            color: #FF6600;
+            font-size: 26pt;
+        }
+        .company-details {
+            flex: 1;
+        }
+        .company-name {
+            font-size: 11pt;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+        .company-info {
+            font-size: 8pt;
+            line-height: 1.3;
+            margin-bottom: 1px;
+        }
+        .challan-type {
+            flex: 0 0 auto;
+            text-align: right;
+            font-size: 10pt;
+            font-weight: bold;
+            padding: 6px 12px;
+            border: 2px solid #000;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 3fr 2fr;
+            border-bottom: 1px solid #000;
+        }
+        .info-left, .info-right {
+            padding: 6px 10px;
+            font-size: 8pt;
+        }
+        .info-left {
+            border-right: 1px solid #000;
+        }
+        .info-row {
+            display: flex;
+            padding: 2px 0;
+        }
+        .info-label {
+            font-weight: bold;
+            width: 120px;
+            flex-shrink: 0;
+        }
+        .info-value {
+            flex: 1;
+        }
+        .deliver-to-section {
+            border-bottom: 1px solid #000;
+            padding: 8px 10px;
+        }
+        .section-title {
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 4px;
+        }
+        .address {
+            font-size: 8pt;
+            line-height: 1.5;
+        }
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .items-table th {
+            background-color: #f0f0f0;
+            border: 1px solid #000;
+            padding: 6px 4px;
+            font-size: 8pt;
+            font-weight: bold;
+            text-align: left;
+        }
+        .items-table td {
+            border: 1px solid #000;
+            padding: 5px 4px;
+            font-size: 8pt;
+            vertical-align: top;
+        }
+        .item-description {
+            font-size: 8pt;
+            line-height: 1.3;
+        }
+        .serial-numbers {
+            font-size: 7pt;
+            color: #333;
+            margin-top: 2px;
+            font-family: 'Courier New', monospace;
+            line-height: 1.2;
+        }
+        .qty-col {
+            text-align: center;
+            width: 50px;
+        }
+        .no-col {
+            width: 25px;
+            text-align: center;
+        }
+        .totals-section {
+            display: grid;
+            grid-template-columns: 1fr 250px;
+        }
+        .left-notes {
+            padding: 8px 10px;
+            border-right: 1px solid #000;
+            font-size: 7pt;
+            line-height: 1.3;
+        }
+        .right-totals {
+            padding: 0;
+        }
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 10px;
+            border-bottom: 1px solid #000;
+            font-size: 8pt;
+        }
+        .total-row.grand-total {
+            font-weight: bold;
+            background-color: #f5f5f5;
+        }
+        .amount-words {
+            padding: 6px 10px;
+            border-bottom: 1px solid #000;
+            font-size: 8pt;
+        }
+        .amount-words strong {
+            font-weight: bold;
+        }
+        .terms-section {
+            padding: 6px 10px;
+            border-bottom: 1px solid #000;
+            font-size: 7pt;
+        }
+        .terms-title {
+            font-weight: bold;
+            margin-bottom: 3px;
+            font-size: 8pt;
+        }
+        .terms-list {
+            line-height: 1.4;
+            padding-left: 0;
+        }
+        .signature-section {
+            padding: 15px 10px 8px;
+            text-align: right;
+        }
+        .signature-line {
+            display: inline-block;
+            text-align: center;
+        }
+        .signature-line strong {
+            display: block;
+            margin-top: 25px;
+            padding-top: 4px;
+            border-top: 1px solid #000;
+            width: 180px;
+            font-size: 8pt;
+        }
+    </style>
+</head>
+<body>
+    <div class="challan-container">
+        <div class="header-section">
+            <div class="logo-section">
+                <div class="logo">airowire<span class="dot">.</span></div>
+            </div>
+            <div class="company-details">
+                <div class="company-name">Airowire Networks Pvt Ltd</div>
+                <div class="company-info">CIN U72200KA2014PTC073769</div>
+                <div class="company-info"><strong>Regd Office</strong></div>
+                <div class="company-info">Airowire Networks Pvt Ltd</div>
+                <div class="company-info">3rd Floor, No #302, "Pine Platinum"</div>
+                <div class="company-info">Ambalipura Main Road, Sarjapur Outer Ring Road - Sector 6</div>
+                <div class="company-info">Bangalore 560102</div>
+                <div class="company-info" style="margin-top: 5px;"><strong>GSTIN: 29AANCA2943E1ZL</strong></div>
+            </div>
+            <div class="challan-type">
+                RETURNABLE DELIVERY CHALLAN
+            </div>
+        </div>
+        <div class="info-grid">
+            <div class="info-left">
+                <div class="info-row">
+                    <span class="info-label">Delivery Challan#</span>
+                    <span class="info-value">: ${challanNumber}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Challan Date</span>
+                    <span class="info-value">: ${challanDate}</span>
+                </div>
+            </div>
+            <div class="info-right">
+                <div class="info-row">
+                    <span class="info-label">Place Of Supply</span>
+                    <span class="info-value">: ${item.city} (${item.city.substring(0, 2).toUpperCase()})</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Challan Type</span>
+                    <span class="info-value">: Others</span>
+                </div>
+            </div>
+        </div>
+        <div class="deliver-to-section">
+            <div class="section-title">Deliver To</div>
+            <div class="address">
+                <strong>${item.store_name}</strong><br>
+                ${item.store_address || 'Plot No: 9, Sec 14 Kaushambi, Ghaziabad 201012'}<br>
+                ${item.city}<br>
+                India
+            </div>
+        </div>
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th class="no-col">#</th>
+                    <th>Item & Description</th>
+                    <th class="qty-col">Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${Object.entries(deviceSummary).map(([deviceType, info], index) => `
+                <tr>
+                    <td class="no-col">${index + 1}</td>
+                    <td>
+                        <div class="item-description">
+                            <strong>${info.make}</strong><br>
+                            ${deviceType === 'Switch' ? `8-Port Gigabit Desktop Switch with 8-Port PoE with power cable` :
+                              deviceType === 'Firewall' ? `40F Firewall with Power cable` :
+                              deviceType === 'Access Point' ? `Indoor Wireless FortiAP 221E-D with mount kits` : deviceType}
+                        </div>
+                        <div class="serial-numbers">
+                            Serial Number${info.serials.length > 1 ? 's' : ''}:<br>
+                            ${info.serials.join('<br>')}
+                        </div>
+                    </td>
+                    <td class="qty-col">${info.qty.toFixed(2)}<br>No</td>
+                </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <div class="totals-section">
+            <div class="left-notes">
+                <strong>Total In Words</strong><br>
+                <em>${amountInWords}</em><br><br>
+                <strong>Notes</strong><br>
+                C2B-Kaushambi G2B_VSHALI_N02R0CC<br>
+                88816D9113
+            </div>
+            <div class="right-totals">
+                <div class="total-row">
+                    <span>Sub Total</span>
+                    <span>₹${subTotal.toFixed(2)}</span>
+                </div>
+                <div class="total-row">
+                    <span>IGST18 (18%)</span>
+                    <span>₹${igst.toFixed(2)}</span>
+                </div>
+                <div class="total-row">
+                    <span>Rounding</span>
+                    <span>0.20</span>
+                </div>
+                <div class="total-row grand-total">
+                    <span>Total</span>
+                    <span>₹${total.toFixed(2)}</span>
+                </div>
+            </div>
+        </div>
+        <div class="terms-section">
+            <div class="terms-title">Terms & Conditions</div>
+            <div class="terms-list">
+                1) This Delivery Challan is issued solely for the purpose of delivery. The<br>
+                goods mentioned in this challan are not intended for commercial use.<br>
+                2) The materials listed in this challan are provided under an Opex<br>
+                (rental) model and will remain the property of Airowire Networks Pvt.<br>
+                3) These materials are issued on a rental basis until further notice.<br>
+                4) The customer is responsible for ensuring that the materials are<br>
+                maintained in good working condition and must prevent any tampering,<br>
+                damage, or unauthorized modifications.<br>
+                5) Any loss or damage to the materials during the rental period will be<br>
+                billed to Zepto Private Limited.<br>
+                6) The materials must be returned upon completion of the rental term<br>
+                (six months) or upon request by Airowire Networks Pvt. Ltd., along with<br>
+                all accessories and original packaging.
+            </div>
+        </div>
+        <div class="signature-section">
+            <div class="signature-line">
+                <strong>Authorized Signature</strong>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
   };
 
   const generateDeliveryAddressLabel = (item: LabellingItem) => {
@@ -184,344 +655,19 @@ Phone: ${item.poc_number}
     });
   };
 
-  const generateDeliveryNote = (item: LabellingItem) => {
-    // Count devices by type
-    const deviceSummary: Record<string, { qty: number; serials: string[] }> = {};
-    
-    item.devices.forEach(device => {
-      const key = `${device.type} - ${device.make}`;
-      if (!deviceSummary[key]) {
-        deviceSummary[key] = { qty: 0, serials: [] };
-      }
-      deviceSummary[key].qty++;
-      deviceSummary[key].serials.push(device.serial);
-    });
+  const generateDeliveryNote = async (item: LabellingItem) => {
+    try {
+      // Generate and download PDF directly (no storage dependency)
+      await generateAndDownloadDeliveryChallan(item);
 
-    const today = new Date().toLocaleDateString('en-IN', { 
-      day: '2-digit', 
-      month: 'short', 
-      year: 'numeric' 
-    });
-
-    // Create A4 size delivery note in HTML format
-    const deliveryNoteHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Delivery Note - ${item.store_code}</title>
-    <style>
-        @page {
-            size: A4;
-            margin: 20mm;
-        }
-        body {
-            font-family: Arial, sans-serif;
-            font-size: 11pt;
-            line-height: 1.4;
-            color: #000;
-            margin: 0;
-            padding: 20px;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 3px solid #000;
-            padding-bottom: 15px;
-            margin-bottom: 20px;
-        }
-        .header .logo {
-            flex: 0 0 auto;
-        }
-        .header .logo img {
-            height: 60px;
-            width: auto;
-        }
-        .header .title-section {
-            flex: 1;
-            text-align: center;
-        }
-        .header h1 {
-            margin: 0 0 5px 0;
-            font-size: 24pt;
-            font-weight: bold;
-            color: #000;
-        }
-        .header p {
-            margin: 0;
-            font-size: 10pt;
-            color: #666;
-        }
-        .header .spacer {
-            flex: 0 0 auto;
-            width: 60px;
-        }
-        .delivery-info {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-        .info-box {
-            border: 1px solid #000;
-            padding: 15px;
-            min-height: 120px;
-        }
-        .info-box h3 {
-            margin: 0 0 10px 0;
-            font-size: 12pt;
-            border-bottom: 1px solid #ccc;
-            padding-bottom: 5px;
-        }
-        .info-box p {
-            margin: 5px 0;
-            font-size: 10pt;
-        }
-        .info-box .label {
-            font-weight: bold;
-            display: inline-block;
-            width: 120px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-        }
-        th {
-            background-color: #000;
-            color: #fff;
-            padding: 12px 8px;
-            text-align: left;
-            font-size: 11pt;
-            font-weight: bold;
-        }
-        td {
-            border: 1px solid #ddd;
-            padding: 10px 8px;
-            font-size: 10pt;
-        }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-        .serial-list {
-            font-size: 9pt;
-            color: #666;
-            margin-top: 5px;
-            font-family: 'Courier New', monospace;
-        }
-        .total-row {
-            background-color: #f0f0f0;
-            font-weight: bold;
-            font-size: 11pt;
-        }
-        .footer {
-            margin-top: 40px;
-            border-top: 1px solid #ccc;
-            padding-top: 15px;
-        }
-        .signatures {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 40px;
-            margin-top: 60px;
-        }
-        .signature-box {
-            text-align: center;
-        }
-        .signature-line {
-            border-bottom: 2px solid #000;
-            margin-bottom: 5px;
-            height: 50px;
-        }
-        .notes {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .notes h4 {
-            margin: 0 0 10px 0;
-            font-size: 11pt;
-        }
-        .notes p {
-            margin: 5px 0;
-            font-size: 9pt;
-            color: #666;
-        }
-        @media print {
-            body {
-                padding: 0;
-            }
-            .no-print {
-                display: none;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="logo">
-            <!-- Airowire Logo: Using base64 embedded image for compatibility -->
-            <!-- Note: Logo path: C:\\Users\\ShivanandPoojar\\OneDrive - AIROWIRE NETWORKS PRIVATE LIMITED\\Documents\\TM logo Colour.png -->
-            <svg width="200" height="60" viewBox="0 0 1800 400" xmlns="http://www.w3.org/2000/svg" style="max-width: 200px; height: auto;">
-                <!-- Recreated Airowire logo based on the image -->
-                <defs>
-                    <linearGradient id="triangleGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style="stop-color:#F5A962;stop-opacity:1" />
-                        <stop offset="100%" style="stop-color:#E67E22;stop-opacity:1" />
-                    </linearGradient>
-                    <linearGradient id="triangleGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
-                        <stop offset="0%" style="stop-color:#9B59B6;stop-opacity:1" />
-                        <stop offset="100%" style="stop-color:#8E44AD;stop-opacity:1" />
-                    </linearGradient>
-                </defs>
-                
-                <!-- Abstract geometric logo mark -->
-                <g transform="translate(0, 50)">
-                    <!-- Orange top triangle -->
-                    <path d="M 80 20 L 160 140 L 120 100 Z" fill="url(#triangleGrad1)"/>
-                    <!-- Orange curved element -->
-                    <ellipse cx="120" cy="180" rx="120" ry="80" fill="#F5A962" opacity="0.9"/>
-                    <!-- Purple bottom triangle -->
-                    <path d="M 50 140 L 120 140 L 80 240 Z" fill="url(#triangleGrad2)"/>
-                    <!-- Black accent -->
-                    <path d="M 80 120 L 120 140 L 100 180 Z" fill="#2C3E50"/>
-                </g>
-                
-                <!-- airowire text -->
-                <text x="280" y="210" font-family="Arial, Helvetica, sans-serif" font-size="180" font-weight="400" fill="#F5A962" letter-spacing="-5">airowire</text>
-                
-                <!-- TM symbol -->
-                <text x="1680" y="120" font-family="Arial, sans-serif" font-size="60" font-weight="bold" fill="#F5A962">™</text>
-            </svg>
-        </div>
-        <div class="title-section">
-            <h1>DELIVERY NOTE</h1>
-            <p>Network Equipment Delivery</p>
-        </div>
-        <div class="spacer"></div>
-    </div>
-
-    <div style="text-align: right; margin-bottom: 15px;">
-        <p style="margin: 0;"><strong>Date:</strong> ${today}</p>
-        <p style="margin: 0;"><strong>Delivery Note #:</strong> DN-${item.store_code}-${Date.now().toString().slice(-6)}</p>
-    </div>
-
-    <div class="delivery-info">
-        <div class="info-box">
-            <h3>TO (Delivery Address)</h3>
-            <p><span class="label">Store Name:</span> ${item.store_name}</p>
-            <p><span class="label">Store Code:</span> ${item.store_code}</p>
-            <p><span class="label">City:</span> ${item.city}</p>
-            <p><span class="label">Address:</span> ${item.store_address}</p>
-            <p style="margin-top: 10px;"><span class="label">Contact Person:</span> ${item.poc_name}</p>
-            <p><span class="label">Contact Number:</span> ${item.poc_number}</p>
-        </div>
-        
-        <div class="info-box">
-            <h3>Configuration Details</h3>
-            <p><span class="label">Engineer:</span> ${item.engineer}</p>
-            <p><span class="label">Firewall IP:</span> ${item.firewall_ip}</p>
-            <p><span class="label">Zonal Port:</span> ${item.zonal_port_number}</p>
-            <p style="margin-top: 10px;"><span class="label">Total Items:</span> ${item.devices.length}</p>
-            <p><span class="label">Config Status:</span> Completed</p>
-        </div>
-    </div>
-
-    <h3 style="margin-top: 30px; margin-bottom: 10px;">Contents of Delivery</h3>
-    <table>
-        <thead>
-            <tr>
-                <th style="width: 50px;">S.No</th>
-                <th>Device Type & Make</th>
-                <th style="width: 80px; text-align: center;">Quantity</th>
-                <th>Serial Numbers</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${Object.entries(deviceSummary).map(([device, info], index) => `
-            <tr>
-                <td style="text-align: center;">${index + 1}</td>
-                <td><strong>${device}</strong></td>
-                <td style="text-align: center;"><strong>${info.qty}</strong></td>
-                <td>
-                    <div class="serial-list">
-                        ${info.serials.map(s => `• ${s}`).join('<br>')}
-                    </div>
-                </td>
-            </tr>
-            `).join('')}
-            <tr class="total-row">
-                <td colspan="2" style="text-align: right;">TOTAL ITEMS:</td>
-                <td style="text-align: center;">${item.devices.length}</td>
-                <td></td>
-            </tr>
-        </tbody>
-    </table>
-
-    <div class="notes">
-        <h4>Important Notes:</h4>
-        <p>• Please verify all serial numbers upon receipt of equipment.</p>
-        <p>• Report any damage or missing items immediately.</p>
-        <p>• This delivery note must be signed and returned as proof of delivery.</p>
-        <p>• Contact engineer for installation and configuration support.</p>
-    </div>
-
-    <div class="signatures">
-        <div class="signature-box">
-            <div class="signature-line"></div>
-            <p><strong>Delivered By</strong></p>
-            <p style="font-size: 9pt; color: #666;">Name & Signature</p>
-        </div>
-        <div class="signature-box">
-            <div class="signature-line"></div>
-            <p><strong>Received By</strong></p>
-            <p style="font-size: 9pt; color: #666;">Name, Signature & Date</p>
-        </div>
-    </div>
-
-    <div class="footer">
-        <p style="text-align: center; font-size: 9pt; color: #666; margin: 0;">
-            This is a computer generated delivery note. For queries, contact support.
-        </p>
-    </div>
-
-    <script>
-        // Auto-print when opened
-        window.onload = function() {
-            setTimeout(function() {
-                window.print();
-            }, 500);
-        };
-    </script>
-</body>
-</html>
-`;
-
-    // Create and download HTML file that will open in browser for printing
-    const blob = new Blob([deliveryNoteHTML], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Delivery_Note_${item.store_code}_${today.replace(/\s/g, '_')}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    
-    // Also open in new window for immediate printing
-    const printWindow = window.open(url, '_blank');
-    if (printWindow) {
-      printWindow.focus();
+    } catch (error: any) {
+      console.error('Error generating delivery challan:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate delivery challan",
+        variant: "destructive"
+      });
     }
-    
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-
-    toast({
-      title: "Delivery Note Generated",
-      description: `A4 delivery note for ${item.store_name} has been generated and opened for printing.`,
-    });
   };
 
   const generateBulkAddressLabels = () => {
@@ -572,12 +718,12 @@ Phone: ${item.poc_number}
 
   const handleMarkLabelled = async (itemId: string) => {
     try {
-      const { error } = await supabase
-        .from('site_assignments')
-        .update({ labeling_done: true })
-        .eq('id', itemId);
-
-      if (error) throw error;
+      // TODO: Uncomment when labeling_done column is added to database
+      // const { error } = await supabase
+      //   .from('site_assignments')
+      //   .update({ labeling_done: true })
+      //   .eq('id', itemId);
+      // if (error) throw error;
 
       toast({
         title: "Success",
@@ -607,12 +753,12 @@ Phone: ${item.poc_number}
     }
 
     try {
-      const { error } = await supabase
-        .from('site_assignments')
-        .update({ labeling_done: true })
-        .in('id', Array.from(selectedItems));
-
-      if (error) throw error;
+      // TODO: Uncomment when labeling_done column is added to database
+      // const { error } = await supabase
+      //   .from('site_assignments')
+      //   .update({ labeling_done: true })
+      //   .in('id', Array.from(selectedItems));
+      // if (error) throw error;
 
       toast({
         title: "Success",
@@ -649,13 +795,13 @@ Phone: ${item.poc_number}
     }
   };
 
-  if (!loading && !has('Operations')) {
+  if (!loading && !has('Operations') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
     return (
       <div className="p-6">
         <Card>
           <CardHeader>
             <CardTitle>Access Restricted</CardTitle>
-            <CardDescription>The Operations feature is disabled for your account.</CardDescription>
+            <CardDescription>You do not have permission to view this page.</CardDescription>
           </CardHeader>
         </Card>
       </div>

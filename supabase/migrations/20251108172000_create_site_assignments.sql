@@ -35,39 +35,49 @@ for each row execute function public.set_updated_at();
 alter table public.site_assignments enable row level security;
 
 -- Policies
+-- Drop existing policies to avoid conflicts
+drop policy if exists "site_assignments_read" on public.site_assignments;
+drop policy if exists "site_assignments_insert" on public.site_assignments;
+drop policy if exists "site_assignments_update" on public.site_assignments;
+drop policy if exists "site_assignments_delete" on public.site_assignments;
+
 -- Read: Admins/managers can see all; assignees and assigners can see their own
-create policy if not exists "site_assignments_read"
+create policy "site_assignments_read"
   on public.site_assignments for select
   using (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role in ('admin','manager'))
-    or assigned_to = auth.uid()
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR 
+    public.has_role(auth.uid(), 'manager'::public.app_role) OR
+    assigned_to = auth.uid()
     or assigned_by = auth.uid()
   );
 
 -- Insert: Admins/managers only
-create policy if not exists "site_assignments_insert"
+create policy "site_assignments_insert"
   on public.site_assignments for insert
   with check (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role in ('admin','manager'))
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role)
   );
 
 -- Update: Admins/managers; assignees can update status only (optional broader rule kept simple here)
-create policy if not exists "site_assignments_update"
+create policy "site_assignments_update"
   on public.site_assignments for update
   using (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role in ('admin','manager'))
-    or assigned_to = auth.uid()
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role) OR
+    assigned_to = auth.uid()
   )
   with check (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role in ('admin','manager'))
-    or assigned_to = auth.uid()
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role) OR
+    assigned_to = auth.uid()
   );
 
 -- Delete: Admins only
-create policy if not exists "site_assignments_delete"
+create policy "site_assignments_delete"
   on public.site_assignments for delete
   using (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role = 'admin')
+    public.has_role(auth.uid(), 'admin'::public.app_role)
   );
 
 -- Helpful index

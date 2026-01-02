@@ -4,5 +4,6 @@ drop policy if exists "site_assignments_delete" on public.site_assignments;
 create policy "site_assignments_delete"
   on public.site_assignments for delete
   using (
-    exists (select 1 from public.user_roles ur where ur.user_id = auth.uid() and ur.role in ('admin', 'manager'))
+    public.has_role(auth.uid(), 'admin'::public.app_role) OR
+    public.has_role(auth.uid(), 'manager'::public.app_role)
   );

@@ -50,11 +50,33 @@ export default function Auth() {
   const [resendLoading, setResendLoading] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showOtpAuth, setShowOtpAuth] = useState(false);
+  const [otpEmail, setOtpEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    // Check for existing session first
+    // Set up auth state listener FIRST
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        // Redirect authenticated users to dashboard
+        if (session?.user) {
+          navigate("/");
+        }
+      }
+    );
+
+    // THEN check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -63,33 +85,6 @@ export default function Auth() {
         navigate("/");
       }
     });
-
-    // Set up auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth event:', event);
-        
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        // Handle different auth events
-        if (event === 'SIGNED_IN' && session?.user) {
-          navigate("/");
-        }
-        
-        // Clear session on sign out or token refresh errors
-        if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-          setSession(session);
-          setUser(session?.user ?? null);
-        }
-        
-        // Handle user updated event
-        if (event === 'USER_UPDATED' && session?.user) {
-          setSession(session);
-          setUser(session?.user ?? null);
-        }
-      }
-    );
 
     return () => subscription.unsubscribe();
   }, [navigate]);
@@ -145,7 +140,7 @@ export default function Auth() {
         // Airowire users get 'user' role, vendors get 'vendor', customers get 'customer'
         const userRole = userType === "airowire" ? "user" : userType; // vendor or customer
         
-        // Sign up with Supabase Auth - minimal data to avoid timeout
+        // Sign up with Supabase Auth
         const { data: authData, error: signupError } = await supabase.auth.signUp({
           email: validatedData.email,
           password: validatedData.password,
@@ -153,6 +148,11 @@ export default function Auth() {
             emailRedirectTo: redirectUrl,
             data: {
               full_name: validatedData.fullName,
+              phone: validatedData.phone,
+              address: userType === "airowire" ? null : (validatedData as any).address,
+              department: userType === "airowire" ? (validatedData as any).department : null,
+              user_type: userType,
+              role: userRole, // Pass the role to the trigger
             },
           },
         });
@@ -169,34 +169,8 @@ export default function Auth() {
             throw signupError;
           }
         } else if (authData.user) {
-          // Update profile details asynchronously (non-blocking)
-          supabase.rpc('update_user_profile_details', {
-            user_id_param: authData.user.id,
-            phone_param: validatedData.phone,
-            address_param: userType === "airowire" ? null : (validatedData as any).address,
-            department_param: userType === "airowire" ? (validatedData as any).department : null,
-          }).then(({ error }) => {
-            if (error) console.warn('Profile update warning:', error);
-          });
-
-          // Assign role asynchronously (non-blocking)
-          supabase.from('user_roles').insert({
-            user_id: authData.user.id,
-            role: userRole,
-          }).then(({ error }) => {
-            if (error) console.warn('Role assignment warning:', error);
-          });
-
-          // Clear any existing session to prevent refresh token errors
-          await supabase.auth.signOut({ scope: 'local' });
-
-          // Reset form
-          setEmail(validatedData.email);
-          setPassword('');
-          setFullName('');
-          setPhone('');
-          setAddress('');
-          setDepartment('');
+          // Wait for trigger to create profile
+          await new Promise(resolve => setTimeout(resolve, 500));
 
           toast({
             title: "Success",
@@ -254,6 +228,152 @@ export default function Auth() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) {
+      toast({ title: "Error", description: "Please enter your email address", variant: "destructive" });
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth?mode=recovery`,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Password reset link sent to your email. Check your inbox.",
+      });
+      setShowForgotPassword(false);
+      setEmail("");
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to send reset email",
+        variant: "destructive",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpEmail) {
+      toast({ title: "Error", description: "Please enter your email address", variant: "destructive" });
+      return;
+    }
+
+    setOtpLoading(true);
+    try {
+      // Use Supabase passwordless sign in with OTP
+      const { error } = await supabase.auth.signInWithOtp({
+        email: otpEmail,
+        options: {
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      });
+
+      if (error) throw error;
+
+      setOtpSent(true);
+      toast({
+        title: "OTP Sent",
+        description: "Check your email for the one-time password",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to send OTP",
+        variant: "destructive",
+      });
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otp || otp.length < 6) {
+      toast({ title: "Error", description: "Please enter a valid OTP", variant: "destructive" });
+      return;
+    }
+
+    setOtpLoading(true);
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: otpEmail,
+        token: otp,
+        type: 'email',
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Logged in successfully via OTP",
+      });
+      setShowOtpAuth(false);
+      setOtp("");
+      setOtpEmail("");
+      setOtpSent(false);
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Invalid OTP",
+        variant: "destructive",
+      });
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!newPassword || !confirmPassword) {
+      toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters", variant: "destructive" });
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Password updated successfully",
+      });
+
+      setNewPassword("");
+      setConfirmPassword("");
+      navigate("/auth");
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to update password",
+        variant: "destructive",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   if (user) {
     return null;
   }
@@ -266,153 +386,349 @@ export default function Auth() {
             NaaS Dashboard
           </CardTitle>
           <CardDescription>
-            {isLogin ? "Sign in to your account" : "Create a new account"}
+            {showForgotPassword
+              ? "Reset your password"
+              : showOtpAuth
+              ? "Sign in with OTP"
+              : isLogin
+              ? "Sign in to your account"
+              : "Create a new account"}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleAuth} className="space-y-4">
-            {!isLogin && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="userType">I am a</Label>
-                  <Select value={userType} onValueChange={(v) => setUserType(v as UserType)}>
-                    <SelectTrigger id="userType">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="airowire">Airowire User</SelectItem>
-                      <SelectItem value="vendor">Vendor</SelectItem>
-                      <SelectItem value="customer">Customer</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="fullName">Full Name *</Label>
-                  <Input
-                    id="fullName"
-                    type="text"
-                    placeholder="John Doe"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
-                </div>
-              </>
-            )}
-            
-            <div className="space-y-2">
-              <Label htmlFor="email">Email *</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder={userType === "airowire" && !isLogin ? "you@airowire.com" : "you@example.com"}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-              />
-              {!isLogin && userType === "airowire" && (
-                <p className="text-xs text-muted-foreground">Must be an @airowire.com email</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password *</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-              />
-              {!isLogin && (
-                <p className="text-xs text-muted-foreground">At least 6 characters</p>
-              )}
-            </div>
-
-            {!isLogin && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number *</Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    placeholder="+1 234 567 8900"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
-                </div>
-
-                {userType !== "airowire" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="address">Address *</Label>
-                    <Input
-                      id="address"
-                      type="text"
-                      placeholder="123 Main St, City, State"
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                      required
-                      disabled={loading}
-                    />
-                  </div>
-                )}
-
-                {userType === "airowire" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="department">Department *</Label>
-                    <Select value={department} onValueChange={setDepartment} required>
-                      <SelectTrigger id="department">
-                        <SelectValue placeholder="Select department" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PMO">PMO</SelectItem>
-                        <SelectItem value="Passive-Vendor">Passive-Vendor</SelectItem>
-                        <SelectItem value="Operations">Operations</SelectItem>
-                        <SelectItem value="Finance">Finance</SelectItem>
-                        <SelectItem value="Management">Management</SelectItem>
-                        <SelectItem value="Engineering">Engineering</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </>
-            )}
-
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Loading..." : isLogin ? "Sign In" : "Sign Up"}
-            </Button>
-          </form>
-
-          {needsConfirmation && (
-            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-              Your email is not confirmed. Click the button below to resend the confirmation email.
-              <div className="mt-2">
-                <Button size="sm" onClick={handleResendConfirmation} disabled={resendLoading}>
-                  {resendLoading ? "Sending..." : "Resend confirmation email"}
-                </Button>
+          {/* Forgot Password Form */}
+          {showForgotPassword && (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="resetEmail">Email Address *</Label>
+                <Input
+                  id="resetEmail"
+                  type="email"
+                  placeholder="your@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={resetLoading}
+                />
               </div>
-            </div>
+              <p className="text-sm text-muted-foreground">
+                We'll send you a link to reset your password.
+              </p>
+              <Button type="submit" className="w-full" disabled={resetLoading}>
+                {resetLoading ? "Sending..." : "Send Reset Link"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setShowForgotPassword(false);
+                  setEmail("");
+                }}
+                disabled={resetLoading}
+              >
+                Back to Sign In
+              </Button>
+            </form>
           )}
 
-          <div className="mt-4 text-center text-sm">
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-primary hover:underline"
-              disabled={loading}
-            >
-              {isLogin
-                ? "Don't have an account? Sign up"
-                : "Already have an account? Sign in"}
-            </button>
-          </div>
+          {/* OTP Authentication Form */}
+          {showOtpAuth && (
+            <form className="space-y-4">
+              {!otpSent ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="otpEmail">Email Address *</Label>
+                    <Input
+                      id="otpEmail"
+                      type="email"
+                      placeholder="your@example.com"
+                      value={otpEmail}
+                      onChange={(e) => setOtpEmail(e.target.value)}
+                      required
+                      disabled={otpLoading}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    We'll send you a one-time password via email.
+                  </p>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={handleSendOtp}
+                    disabled={otpLoading}
+                  >
+                    {otpLoading ? "Sending..." : "Send OTP"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="otpCode">Enter OTP *</Label>
+                    <Input
+                      id="otpCode"
+                      type="text"
+                      placeholder="000000"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+                      maxLength={6}
+                      required
+                      disabled={otpLoading}
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Check your email for the 6-digit code
+                  </p>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={handleVerifyOtp}
+                    disabled={otpLoading || otp.length < 6}
+                  >
+                    {otpLoading ? "Verifying..." : "Verify OTP"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setOtpSent(false)}
+                    disabled={otpLoading}
+                  >
+                    Back
+                  </Button>
+                </>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => {
+                  setShowOtpAuth(false);
+                  setOtp("");
+                  setOtpEmail("");
+                  setOtpSent(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </form>
+          )}
+
+          {/* Password Reset Form (from recovery email) */}
+          {typeof window !== "undefined" &&
+            new URLSearchParams(window.location.search).get("mode") === "recovery" && (
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="newPassword">New Password *</Label>
+                <Input
+                  id="newPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  disabled={resetLoading}
+                />
+                <p className="text-xs text-muted-foreground">At least 8 characters</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password *</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  disabled={resetLoading}
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={resetLoading}>
+                {resetLoading ? "Updating..." : "Update Password"}
+              </Button>
+            </form>
+          )}
+
+          {/* Standard Sign In / Sign Up Form */}
+          {!showForgotPassword && !showOtpAuth && !new URLSearchParams(window.location.search).get("mode") && (
+            <>
+              <form onSubmit={handleAuth} className="space-y-4">
+                {!isLogin && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="userType">I am a</Label>
+                      <Select value={userType} onValueChange={(v) => setUserType(v as UserType)}>
+                        <SelectTrigger id="userType">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="airowire">Airowire User</SelectItem>
+                          <SelectItem value="vendor">Vendor</SelectItem>
+                          <SelectItem value="customer">Customer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="fullName">Full Name *</Label>
+                      <Input
+                        id="fullName"
+                        type="text"
+                        placeholder="John Doe"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        required
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder={userType === "airowire" && !isLogin ? "you@airowire.com" : "you@example.com"}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    disabled={loading}
+                  />
+                  {!isLogin && userType === "airowire" && (
+                    <p className="text-xs text-muted-foreground">Must be an @airowire.com email</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Password *</Label>
+                    {isLogin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowForgotPassword(true);
+                          setEmail("");
+                        }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    disabled={loading}
+                  />
+                  {!isLogin && (
+                    <p className="text-xs text-muted-foreground">At least 6 characters</p>
+                  )}
+                </div>
+
+                {!isLogin && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone Number *</Label>
+                      <Input
+                        id="phone"
+                        type="tel"
+                        placeholder="+1 234 567 8900"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        required
+                        disabled={loading}
+                      />
+                    </div>
+
+                    {userType !== "airowire" && (
+                      <div className="space-y-2">
+                        <Label htmlFor="address">Address *</Label>
+                        <Input
+                          id="address"
+                          type="text"
+                          placeholder="123 Main St, City, State"
+                          value={address}
+                          onChange={(e) => setAddress(e.target.value)}
+                          required
+                          disabled={loading}
+                        />
+                      </div>
+                    )}
+
+                    {userType === "airowire" && (
+                      <div className="space-y-2">
+                        <Label htmlFor="department">Department *</Label>
+                        <Select value={department} onValueChange={setDepartment} required>
+                          <SelectTrigger id="department">
+                            <SelectValue placeholder="Select department" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="PMO">PMO</SelectItem>
+                            <SelectItem value="Passive-Vendor">Passive-Vendor</SelectItem>
+                            <SelectItem value="Operations">Operations</SelectItem>
+                            <SelectItem value="Finance">Finance</SelectItem>
+                            <SelectItem value="Management">Management</SelectItem>
+                            <SelectItem value="Engineering">Engineering</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? "Loading..." : isLogin ? "Sign In" : "Sign Up"}
+                </Button>
+              </form>
+
+              {needsConfirmation && (
+                <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                  Your email is not confirmed. Click the button below to resend the confirmation email.
+                  <div className="mt-2">
+                    <Button size="sm" onClick={handleResendConfirmation} disabled={resendLoading}>
+                      {resendLoading ? "Sending..." : "Resend confirmation email"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 space-y-2 text-center text-sm">
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setIsLogin(!isLogin)}
+                    className="text-primary hover:underline"
+                    disabled={loading}
+                  >
+                    {isLogin
+                      ? "Don't have an account? Sign up"
+                      : "Already have an account? Sign in"}
+                  </button>
+                </div>
+                {isLogin && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOtpAuth(true);
+                        setOtpEmail("");
+                        setOtp("");
+                        setOtpSent(false);
+                      }}
+                      className="text-primary hover:underline text-xs"
+                    >
+                      Sign in with OTP instead
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

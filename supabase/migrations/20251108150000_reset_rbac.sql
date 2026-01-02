@@ -153,32 +153,40 @@ $$;
 
 -- 11) RLS policies
 -- user_roles
-CREATE POLICY IF NOT EXISTS "Users can view their own roles"
+DROP POLICY IF EXISTS "Users can view their own roles" ON public.user_roles;
+DROP POLICY IF EXISTS "Admins can view all roles" ON public.user_roles;
+DROP POLICY IF EXISTS "Admins can manage all roles" ON public.user_roles;
+DROP POLICY IF EXISTS "Admins manage permissions" ON public.permissions;
+DROP POLICY IF EXISTS "Admins manage role_permissions" ON public.role_permissions;
+DROP POLICY IF EXISTS "Everyone can view features" ON public.feature_access;
+DROP POLICY IF EXISTS "Admins can manage features" ON public.feature_access;
+
+CREATE POLICY "Users can view their own roles"
   ON public.user_roles FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
 
-CREATE POLICY IF NOT EXISTS "Admins can view all roles"
+CREATE POLICY "Admins can view all roles"
   ON public.user_roles FOR SELECT TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
-CREATE POLICY IF NOT EXISTS "Admins can manage all roles"
+CREATE POLICY "Admins can manage all roles"
   ON public.user_roles FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- permissions
-CREATE POLICY IF NOT EXISTS "Admins manage permissions"
+CREATE POLICY "Admins manage permissions"
   ON public.permissions FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- role_permissions
-CREATE POLICY IF NOT EXISTS "Admins manage role_permissions"
+CREATE POLICY "Admins manage role_permissions"
   ON public.role_permissions FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- feature_access
-CREATE POLICY IF NOT EXISTS "Everyone can view features"
+CREATE POLICY "Everyone can view features"
   ON public.feature_access FOR SELECT TO authenticated USING (true);
-CREATE POLICY IF NOT EXISTS "Admins can manage features"
+CREATE POLICY "Admins can manage features"
   ON public.feature_access FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 

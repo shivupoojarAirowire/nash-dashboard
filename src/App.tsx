@@ -26,7 +26,6 @@ import ISPManagement from "./pages/ISPManagement";
 import ProjectOperations from "./pages/ProjectOperations";
 import NetworkOperations from "./pages/NetworkOperations";
 import Reports from "./pages/Reports";
-import Customer from "./pages/Customer";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 import UserProfile from "./pages/UserProfile";
@@ -65,7 +64,6 @@ const App = () => (
             <Route path="/project-operations" element={<ProjectOperations />} />
             <Route path="/network-operations" element={<NetworkOperations />} />
             <Route path="/reports" element={<Reports />} />
-            <Route path="/customer" element={<Customer />} />
             <Route path="/profile" element={<UserProfile />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

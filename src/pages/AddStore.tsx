@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type FormValues = {
   priority: string;
@@ -43,6 +44,8 @@ type StoreDetails = {
   created_at: string;
   deviceCount?: number;
   hasFloorPlan?: boolean;
+  has_floor_plan?: boolean;
+  floor_plan_files?: Array<{name: string; path: string; url: string}>;
   status?: string;
   cancel_remarks?: string;
   cancelled_at?: string;
@@ -83,12 +86,20 @@ const AddStore: React.FC = () => {
   const [selectedStoreForView, setSelectedStoreForView] = React.useState<StoreDetails | null>(null);
   const [deviceList, setDeviceList] = React.useState<DeviceInfo[]>([]);
   const [loadingDevices, setLoadingDevices] = React.useState(false);
+  const [heatmapFiles, setHeatmapFiles] = React.useState<Array<{name: string; url: string}>>([]);
+  const [loadingHeatmaps, setLoadingHeatmaps] = React.useState(false);
+  const [documentFiles, setDocumentFiles] = React.useState<Array<{name: string; url: string; created_at?: string}>>([]);
+  const [loadingDocuments, setLoadingDocuments] = React.useState(false);
   const [floorPlanFiles, setFloorPlanFiles] = React.useState<File[]>([]);
   const [uploadingFloorPlan, setUploadingFloorPlan] = React.useState(false);
+  const [floorPlanUrls, setFloorPlanUrls] = React.useState<Array<{name: string; url: string}>>([]);
+  const [loadingFloorPlan, setLoadingFloorPlan] = React.useState(false);
   const [addStoreDialogOpen, setAddStoreDialogOpen] = React.useState(false);
   const [bulkUploadDialogOpen, setBulkUploadDialogOpen] = React.useState(false);
   const [editStoreDialogOpen, setEditStoreDialogOpen] = React.useState(false);
   const [editingStore, setEditingStore] = React.useState<StoreDetails | null>(null);
+  const [storeInfoDialogOpen, setStoreInfoDialogOpen] = React.useState(false);
+  const [selectedStoreForInfo, setSelectedStoreForInfo] = React.useState<StoreDetails | null>(null);
   
   // Filter states
   const [filterStoreCode, setFilterStoreCode] = React.useState("");
@@ -139,32 +150,11 @@ const AddStore: React.FC = () => {
             .select('*', { count: 'exact', head: true })
             .eq('store_code', store.store_code);
 
-          // Check for floor plan in storage
-          let hasFloorPlan = false;
-          try {
-            const { data: floorPlans } = await supabase.storage.from('floor-maps').list(store.store_code);
-            hasFloorPlan = (floorPlans && floorPlans.length > 0) || false;
-          } catch (err) {
-            // ignore storage list errors and fallback to DB metadata check
-            console.warn('Storage list error for', store.store_code, err);
-          }
-
-          // Also check the persisted metadata table in case files were uploaded but storage listing failed
-          try {
-            const { count: fpCount, error: fpError } = await supabase
-              .from('store_floor_plans')
-              .select('id', { count: 'exact', head: true })
-              .eq('store_code', store.store_code);
-
-            if (!fpError && (fpCount || 0) > 0) hasFloorPlan = true;
-          } catch (err) {
-            console.warn('store_floor_plans query error for', store.store_code, err);
-          }
-
+          // Use has_floor_plan from database instead of checking storage
           return {
             ...store,
             deviceCount: deviceCount || 0,
-            hasFloorPlan,
+            hasFloorPlan: store.has_floor_plan || false,
           };
         })
       );
@@ -217,9 +207,8 @@ const AddStore: React.FC = () => {
 
   const onSubmit = async (data: FormValues) => {
     try {
-      // Map UI-friendly options to DB enum values
-      const siteReadinessDb = data.siteReadiness === "Existing site" ? "Ready" : "Not Ready";
-
+      // Use the form values directly - they already match the DB constraint
+      // "Existing site" or "New site"
       const newStore: Parameters<typeof addStore>[0] = {
         city: data.city,
         store: data.store,
@@ -228,14 +217,31 @@ const AddStore: React.FC = () => {
         poc: data.poc,
         poc_no: data.pocNo,
         priority: data.priority as "High" | "Medium" | "Low",
-        site_readiness: siteReadinessDb as "Ready" | "Not Ready" | "Partial"
+        site_readiness: data.siteReadiness as "Existing site" | "New site",
+        has_floor_plan: false // Will be updated after upload if files are provided
       };
       
       await addStore(newStore);
       
-      // Upload floor plans if selected
+      // Upload floor plans if selected and update the store
       if (floorPlanFiles.length > 0) {
-        await uploadFloorPlans(data.storeCode);
+        const uploadedFiles = await uploadFloorPlans(data.storeCode);
+        
+        // Update the newly created store with floor plan information
+        if (uploadedFiles.length > 0) {
+          console.log('Updating newly created store with floor plan data:', uploadedFiles);
+          const { error: updateError } = await supabase
+            .from('stores')
+            .update({
+              floor_plan_files: uploadedFiles,
+              has_floor_plan: true
+            })
+            .eq('store_code', data.storeCode);
+            
+          if (updateError) {
+            console.error('Error updating floor plan data for new store:', updateError);
+          }
+        }
       }
       
       toast({ title: "Store added", description: `${data.store} (${data.storeCode}) added successfully.` });
@@ -252,14 +258,14 @@ const AddStore: React.FC = () => {
     }
   };
 
-  const uploadFloorPlans = async (storeCode: string) => {
-    if (floorPlanFiles.length === 0) return;
+  const uploadFloorPlans = async (storeCode: string): Promise<Array<{name: string; path: string; url: string}>> => {
+    if (floorPlanFiles.length === 0) return [];
     
     setUploadingFloorPlan(true);
     try {
       let successCount = 0;
       let errorCount = 0;
-      const uploadedRecords: { file_path: string; file_name: string; file_url?: string }[] = [];
+      const uploadedFiles: Array<{name: string; path: string; url: string}> = [];
 
       for (const file of floorPlanFiles) {
         try {
@@ -272,10 +278,20 @@ const AddStore: React.FC = () => {
             .upload(filePath, file);
 
           if (uploadError) throw uploadError;
+          
+          // Get the public URL for the uploaded file
+          const { data: urlData } = supabase.storage
+            .from('floor-maps')
+            .getPublicUrl(filePath);
+          
+          // Track uploaded file info with full URL
+          uploadedFiles.push({
+            name: file.name,
+            path: filePath,
+            url: urlData.publicUrl
+          });
+          
           successCount++;
-          // collect metadata for DB insert
-          const publicUrl = supabase.storage.from('floor-maps').getPublicUrl(filePath).data?.publicUrl;
-          uploadedRecords.push({ file_path: filePath, file_name: fileName, file_url: publicUrl });
         } catch (error) {
           console.error(`Error uploading ${file.name}:`, error);
           errorCount++;
@@ -283,28 +299,11 @@ const AddStore: React.FC = () => {
       }
 
       if (successCount > 0) {
-        // Persist uploaded file metadata to DB
-        try {
-          const recordsToInsert = uploadedRecords.map(r => ({
-            store_code: storeCode,
-            file_path: r.file_path,
-            file_name: r.file_name,
-            file_url: r.file_url || null
-          }));
-
-          const { error: insertError } = await supabase
-            .from('store_floor_plans')
-            .insert(recordsToInsert);
-
-          if (insertError) console.warn('Failed to persist floor plan metadata:', insertError);
-        } catch (err) {
-          console.warn('Error inserting floor plan metadata:', err);
-        }
-
         toast({
-          title: "Success",
+          title: "Upload Complete",
           description: `${successCount} floor plan(s) uploaded successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ''}`,
         });
+        return uploadedFiles;
       } else {
         throw new Error('All uploads failed');
       }
@@ -315,9 +314,17 @@ const AddStore: React.FC = () => {
         description: "Failed to upload floor plans.",
         variant: "destructive",
       });
+      return [];
     } finally {
       setUploadingFloorPlan(false);
     }
+  };
+
+  const handleRowClick = async (store: StoreDetails) => {
+    setSelectedStoreForInfo(store);
+    setStoreInfoDialogOpen(true);
+    // Load full details
+    await handleViewStoreDetails(store);
   };
 
   const handleViewDevices = async (store: StoreDetails) => {
@@ -325,13 +332,13 @@ const AddStore: React.FC = () => {
     setLoadingDevices(true);
     
     try {
-      const { data: devices, error } = await supabase
+      // Load only devices
+      const { data: devices, error: devError } = await supabase
         .from('inventory')
         .select('*')
         .eq('store_code', store.store_code);
 
-      if (error) throw error;
-
+      if (devError) throw devError;
       setDeviceList(devices || []);
     } catch (error) {
       console.error('Error loading devices:', error);
@@ -345,6 +352,126 @@ const AddStore: React.FC = () => {
     }
   };
 
+  const handleViewStoreDetails = async (store: StoreDetails) => {
+    setSelectedStoreForView(store);
+    setLoadingDevices(true);
+    setLoadingHeatmaps(true);
+    setLoadingDocuments(true);
+    
+    try {
+      // Load devices
+      const { data: devices, error: devError } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('store_code', store.store_code);
+
+      if (devError) throw devError;
+      setDeviceList(devices || []);
+
+      // Load heatmaps from storage
+      try {
+        const { data: files, error: storageError } = await supabase
+          .storage
+          .from('heatmaps')
+          .list(store.store_code);
+
+        if (storageError) {
+          console.warn('No heatmaps found for this store');
+          setHeatmapFiles([]);
+        } else {
+          // Get signed URLs for each file
+          const filesWithUrls = await Promise.all(
+            (files || []).map(async (file) => {
+              const { data: urlData } = await supabase
+                .storage
+                .from('heatmaps')
+                .getPublicUrl(`${store.store_code}/${file.name}`);
+              return {
+                name: file.name,
+                url: urlData?.publicUrl || ''
+              };
+            })
+          );
+          setHeatmapFiles(filesWithUrls);
+        }
+      } catch (err) {
+        console.warn('Error loading heatmaps:', err);
+        setHeatmapFiles([]);
+      }
+
+      // Load documents from documents table
+      try {
+        const { data: docs, error: docsError } = await supabase
+          .from('documents')
+          .select('id, file_name, store_code, created_at')
+          .eq('store_code', store.store_code)
+          .order('created_at', { ascending: false });
+
+        if (docsError) {
+          console.warn('No documents found for this store');
+          setDocumentFiles([]);
+        } else {
+          // Get signed URLs for each document
+          const docsWithUrls = await Promise.all(
+            (docs || []).map(async (doc) => {
+              const { data: urlData } = await supabase
+                .storage
+                .from('documents')
+                .getPublicUrl(`${store.store_code}/${doc.file_name}`);
+              return {
+                name: doc.file_name,
+                url: urlData?.publicUrl || '',
+                created_at: doc.created_at
+              };
+            })
+          );
+          setDocumentFiles(docsWithUrls);
+        }
+      } catch (err) {
+        console.warn('Error loading documents:', err);
+        setDocumentFiles([]);
+      }
+
+      // Load floor plans from floor_plan_files column in database
+      setLoadingFloorPlan(true);
+      try {
+        if (store.has_floor_plan && store.floor_plan_files) {
+          // Parse the floor_plan_files JSON - use stored URL if available, otherwise generate
+          const files = Array.isArray(store.floor_plan_files) ? store.floor_plan_files : [];
+          console.log('Loading floor plans from database:', files);
+          const filesWithUrls = files.map((file: any) => {
+            return {
+              name: file.name,
+              url: file.url || '' // Use the URL stored in database
+            };
+          });
+          console.log('Floor plan URLs set to:', filesWithUrls);
+          setFloorPlanUrls(filesWithUrls);
+        } else {
+          console.log('No floor plans found for store');
+          setFloorPlanUrls([]);
+        }
+      } catch (err) {
+        console.error('Error loading floor plans:', err);
+        setFloorPlanUrls([]);
+      } finally {
+        setLoadingFloorPlan(false);
+      }
+    } catch (error) {
+      console.error('Error loading store details:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load store information.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingDevices(false);
+      setLoadingHeatmaps(false);
+      setLoadingDocuments(false);
+      setLoadingFloorPlan(false);
+    }
+  };
+
   const handleEditStore = (store: StoreDetails) => {
     setEditingStore(store);
     // Populate form with store data
@@ -355,7 +482,7 @@ const AddStore: React.FC = () => {
     setValue("address", store.address || "");
     setValue("poc", store.poc || "");
     setValue("pocNo", store.poc_no || "");
-    setValue("siteReadiness", store.site_readiness === "Ready" ? "Existing site" : "New site");
+    setValue("siteReadiness", store.site_readiness === "Existing site" ? "Existing site" : "New site");
     setEditStoreDialogOpen(true);
   };
 
@@ -363,28 +490,48 @@ const AddStore: React.FC = () => {
     if (!editingStore) return;
 
     try {
-      const siteReadinessDb = data.siteReadiness === "Existing site" ? "Ready" : "Not Ready";
-
-      const { error } = await supabase
-        .from('stores')
-        .update({
-          city: data.city,
-          store: data.store,
-          store_code: data.storeCode,
-          address: data.address,
-          poc: data.poc,
-          poc_no: data.pocNo,
-          priority: data.priority as "High" | "Medium" | "Low",
-          site_readiness: siteReadinessDb as "Ready" | "Not Ready" | "Partial"
-        })
-        .eq('id', editingStore.id);
-
-      if (error) throw error;
-
-      // Upload floor plans if selected
+      // Upload floor plans first if selected
+      let uploadedFiles: Array<{name: string; path: string; url: string}> = [];
       if (floorPlanFiles.length > 0) {
-        await uploadFloorPlans(data.storeCode);
+        console.log('Starting floor plan upload for store:', data.storeCode);
+        uploadedFiles = await uploadFloorPlans(data.storeCode);
+        console.log('Upload completed. Files:', uploadedFiles);
       }
+
+      // Update store record - include floor plan data if files were uploaded
+      const updateData: any = {
+        city: data.city,
+        store: data.store,
+        store_code: data.storeCode,
+        address: data.address,
+        poc: data.poc,
+        poc_no: data.pocNo,
+        priority: data.priority as "High" | "Medium" | "Low",
+        site_readiness: data.siteReadiness as "Existing site" | "New site",
+      };
+      
+      // Add floor plan data if files were uploaded
+      if (uploadedFiles.length > 0) {
+        updateData.floor_plan_files = uploadedFiles;
+        updateData.has_floor_plan = true;
+        console.log('UPDATING DATABASE with floor plan data:', JSON.stringify(updateData, null, 2));
+      } else {
+        console.log('No files uploaded, updating without floor plan data');
+      }
+
+      console.log('Updating store with ID:', editingStore.id);
+      const { error, data: resultData } = await supabase
+        .from('stores')
+        .update(updateData)
+        .eq('id', editingStore.id)
+        .select();
+
+      if (error) {
+        console.error('DATABASE UPDATE ERROR:', error);
+        throw error;
+      }
+      
+      console.log('Database update result:', resultData);
 
       toast({
         title: "Success",
@@ -395,7 +542,11 @@ const AddStore: React.FC = () => {
       setEditingStore(null);
       reset();
       setFloorPlanFiles([]);
-      loadStores();
+      
+      // Wait a moment for database to sync, then reload
+      setTimeout(() => {
+        loadStores();
+      }, 500);
     } catch (error) {
       console.error('Error updating store:', error);
       toast({
@@ -1016,6 +1167,7 @@ const AddStore: React.FC = () => {
                 );
               })()}
               
+              <TooltipProvider>
               <Table>
               <TableHeader>
                 <TableRow>
@@ -1082,83 +1234,88 @@ const AddStore: React.FC = () => {
                   const paginatedStores = filteredStores.slice(startIndex, endIndex);
                   
                   return paginatedStores.map((store) => (
-                  <TableRow key={store.id}>
-                    <TableCell className="font-mono font-medium">{store.store_code}</TableCell>
-                    <TableCell>{store.city}</TableCell>
-                    <TableCell>{store.store}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{store.deviceCount || 0}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {store.hasFloorPlan ? (
-                        <Badge variant="default" className="flex items-center gap-1 w-fit">
-                          <CheckCircle className="h-3 w-3" />
-                          Yes
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                          <XCircle className="h-3 w-3" />
-                          No
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => handleViewDevices(store)}
-                          >
-                            <Eye className="h-4 w-4 mr-2" />
-                            View
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
-                          <DialogHeader>
-                            <DialogTitle>Device Information - {store.store}</DialogTitle>
-                            <DialogDescription>
-                              Store Code: {store.store_code} | City: {store.city}
-                            </DialogDescription>
-                          </DialogHeader>
-                          {loadingDevices ? (
-                            <div className="text-center py-8">Loading devices...</div>
-                          ) : deviceList.length === 0 ? (
-                            <div className="text-center py-8 text-muted-foreground">
-                              No devices allocated to this store yet.
-                            </div>
-                          ) : (
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Type</TableHead>
-                                  <TableHead>Make</TableHead>
-                                  <TableHead>Model</TableHead>
-                                  <TableHead>Serial Number</TableHead>
-                                  <TableHead>Status</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {deviceList.map((device) => (
-                                  <TableRow key={device.id}>
-                                    <TableCell className="font-medium">{device.type}</TableCell>
-                                    <TableCell>{device.make}</TableCell>
-                                    <TableCell>{device.model || '-'}</TableCell>
-                                    <TableCell className="font-mono text-sm">{device.serial}</TableCell>
-                                    <TableCell>
-                                      <Badge variant={device.in_use ? "default" : "secondary"}>
-                                        {device.in_use ? "In Use" : "Free"}
-                                      </Badge>
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </TableCell>
-                    <TableCell>
+                    <Tooltip key={store.id}>
+                      <TooltipTrigger asChild>
+                        <TableRow 
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleRowClick(store)}
+                        >
+                          <TableCell className="font-mono font-medium">{store.store_code}</TableCell>
+                          <TableCell>{store.city}</TableCell>
+                          <TableCell>{store.store}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">{store.deviceCount || 0}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            {store.hasFloorPlan ? (
+                              <Badge variant="default" className="flex items-center gap-1 w-fit">
+                                <CheckCircle className="h-3 w-3" />
+                                Yes
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                                <XCircle className="h-3 w-3" />
+                                No
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm"
+                                  onClick={() => handleViewDevices(store)}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  Devices
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                                <DialogHeader>
+                                  <DialogTitle>Devices - {store.store}</DialogTitle>
+                                  <DialogDescription>
+                                    Store Code: {store.store_code}
+                                  </DialogDescription>
+                                </DialogHeader>
+                                {loadingDevices ? (
+                                  <div className="text-center py-8">Loading devices...</div>
+                                ) : deviceList.length === 0 ? (
+                                  <div className="text-center py-8 text-muted-foreground">
+                                    No devices allocated to this store yet.
+                                  </div>
+                                ) : (
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Type</TableHead>
+                                        <TableHead>Make</TableHead>
+                                        <TableHead>Model</TableHead>
+                                        <TableHead>Serial Number</TableHead>
+                                        <TableHead>Status</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {deviceList.map((device) => (
+                                        <TableRow key={device.id}>
+                                          <TableCell className="font-medium">{device.type}</TableCell>
+                                          <TableCell>{device.make}</TableCell>
+                                          <TableCell>{device.model || '-'}</TableCell>
+                                          <TableCell className="font-mono text-sm">{device.serial}</TableCell>
+                                          <TableCell>
+                                            <Badge variant={device.in_use ? "default" : "secondary"}>
+                                              {device.in_use ? "In Use" : "Free"}
+                                            </Badge>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                )}
+                              </DialogContent>
+                            </Dialog>
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-2">
                         <Button
                           variant="ghost"
@@ -1184,10 +1341,40 @@ const AddStore: React.FC = () => {
                       </div>
                     </TableCell>
                   </TableRow>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="max-w-sm p-4">
+                        <div className="space-y-2 text-sm">
+                          <div className="font-semibold text-base mb-2">{store.store}</div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                            <span className="text-muted-foreground">Store Code:</span>
+                            <span className="font-mono">{store.store_code}</span>
+                            <span className="text-muted-foreground">City:</span>
+                            <span>{store.city}</span>
+                            <span className="text-muted-foreground">Priority:</span>
+                            <span>{store.priority || 'N/A'}</span>
+                            <span className="text-muted-foreground">POC:</span>
+                            <span>{store.poc || 'N/A'}</span>
+                            <span className="text-muted-foreground">POC Number:</span>
+                            <span>{store.poc_no || 'N/A'}</span>
+                            <span className="text-muted-foreground">Site Readiness:</span>
+                            <span>{store.site_readiness || 'N/A'}</span>
+                            <span className="text-muted-foreground">Devices:</span>
+                            <span>{store.deviceCount || 0}</span>
+                          </div>
+                          {store.address && (
+                            <div className="pt-1 border-t">
+                              <span className="text-muted-foreground">Address: </span>
+                              <span className="text-xs">{store.address}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
                   ));
                 })()}
               </TableBody>
             </Table>
+            </TooltipProvider>
             
             {/* Bottom Pagination Controls */}
           {!loadingStores && storeList.length > 0 && (() => {
@@ -1373,6 +1560,7 @@ const AddStore: React.FC = () => {
                 );
               })()}
 
+            <TooltipProvider>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1439,84 +1627,89 @@ const AddStore: React.FC = () => {
                   const paginatedStores = filteredStores.slice(startIndex, endIndex);
                   
                   return paginatedStores.map((store) => (
-                  <TableRow key={store.id}>
-                    <TableCell className="font-mono font-medium">{store.store_code}</TableCell>
-                    <TableCell>{store.city}</TableCell>
-                    <TableCell>{store.store}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{store.deviceCount || 0}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {store.hasFloorPlan ? (
-                        <Badge variant="default" className="flex items-center gap-1 w-fit">
-                          <CheckCircle className="h-3 w-3" />
-                          Yes
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                          <XCircle className="h-3 w-3" />
-                          No
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => handleViewDevices(store)}
-                          >
-                            <Eye className="h-4 w-4 mr-2" />
-                            View
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
-                          <DialogHeader>
-                            <DialogTitle>Device Information - {store.store}</DialogTitle>
-                            <DialogDescription>
-                              Store Code: {store.store_code} | City: {store.city}
-                            </DialogDescription>
-                          </DialogHeader>
-                          {loadingDevices ? (
-                            <div className="text-center py-8">Loading devices...</div>
-                          ) : deviceList.length === 0 ? (
-                            <div className="text-center py-8 text-muted-foreground">
-                              No devices allocated to this store yet.
-                            </div>
-                          ) : (
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Type</TableHead>
-                                  <TableHead>Make</TableHead>
-                                  <TableHead>Model</TableHead>
-                                  <TableHead>Serial Number</TableHead>
-                                  <TableHead>Status</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {deviceList.map((device) => (
-                                  <TableRow key={device.id}>
-                                    <TableCell className="font-medium">{device.type}</TableCell>
-                                    <TableCell>{device.make}</TableCell>
-                                    <TableCell>{device.model || '-'}</TableCell>
-                                    <TableCell className="font-mono text-sm">{device.serial}</TableCell>
-                                    <TableCell>
-                                      <Badge variant={device.in_use ? "default" : "secondary"}>
-                                        {device.in_use ? "In Use" : "Free"}
-                                      </Badge>
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
+                    <Tooltip key={store.id}>
+                      <TooltipTrigger asChild>
+                        <TableRow 
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleRowClick(store)}
+                        >
+                          <TableCell className="font-mono font-medium">{store.store_code}</TableCell>
+                          <TableCell>{store.city}</TableCell>
+                          <TableCell>{store.store}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">{store.deviceCount || 0}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            {store.hasFloorPlan ? (
+                              <Badge variant="default" className="flex items-center gap-1 w-fit">
+                                <CheckCircle className="h-3 w-3" />
+                                Yes
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                                <XCircle className="h-3 w-3" />
+                                No
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm"
+                                  onClick={() => handleViewDevices(store)}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  Devices
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                                <DialogHeader>
+                                  <DialogTitle>Devices - {store.store}</DialogTitle>
+                                  <DialogDescription>
+                                    Store Code: {store.store_code}
+                                  </DialogDescription>
+                                </DialogHeader>
+                                {loadingDevices ? (
+                                  <div className="text-center py-8">Loading devices...</div>
+                                ) : deviceList.length === 0 ? (
+                                  <div className="text-center py-8 text-muted-foreground">
+                                    No devices allocated to this store yet.
+                                  </div>
+                                ) : (
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Type</TableHead>
+                                        <TableHead>Make</TableHead>
+                                        <TableHead>Model</TableHead>
+                                        <TableHead>Serial Number</TableHead>
+                                        <TableHead>Status</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {deviceList.map((device) => (
+                                        <TableRow key={device.id}>
+                                          <TableCell className="font-medium">{device.type}</TableCell>
+                                          <TableCell>{device.make}</TableCell>
+                                          <TableCell>{device.model || '-'}</TableCell>
+                                          <TableCell className="font-mono text-sm">{device.serial}</TableCell>
+                                          <TableCell>
+                                            <Badge variant={device.in_use ? "default" : "secondary"}>
+                                              {device.in_use ? "In Use" : "Free"}
+                                            </Badge>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                )}
+                              </DialogContent>
+                            </Dialog>
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <div className="flex gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1541,10 +1734,40 @@ const AddStore: React.FC = () => {
                       </div>
                     </TableCell>
                   </TableRow>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="max-w-sm p-4">
+                        <div className="space-y-2 text-sm">
+                          <div className="font-semibold text-base mb-2">{store.store}</div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                            <span className="text-muted-foreground">Store Code:</span>
+                            <span className="font-mono">{store.store_code}</span>
+                            <span className="text-muted-foreground">City:</span>
+                            <span>{store.city}</span>
+                            <span className="text-muted-foreground">Priority:</span>
+                            <span>{store.priority || 'N/A'}</span>
+                            <span className="text-muted-foreground">POC:</span>
+                            <span>{store.poc || 'N/A'}</span>
+                            <span className="text-muted-foreground">POC Number:</span>
+                            <span>{store.poc_no || 'N/A'}</span>
+                            <span className="text-muted-foreground">Site Readiness:</span>
+                            <span>{store.site_readiness || 'N/A'}</span>
+                            <span className="text-muted-foreground">Devices:</span>
+                            <span>{store.deviceCount || 0}</span>
+                          </div>
+                          {store.address && (
+                            <div className="pt-1 border-t">
+                              <span className="text-muted-foreground">Address: </span>
+                              <span className="text-xs">{store.address}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
                   ));
                 })()}
               </TableBody>
             </Table>
+            </TooltipProvider>
             
             {/* Bottom Pagination Controls */}
           {!loadingStores && storeList.length > 0 && (() => {
@@ -1861,6 +2084,241 @@ const AddStore: React.FC = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Full Store Information Dialog (triggered by row click) */}
+      <Dialog open={storeInfoDialogOpen} onOpenChange={setStoreInfoDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {selectedStoreForInfo && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Store Details - {selectedStoreForInfo.store}</DialogTitle>
+                <DialogDescription>
+                  Store Code: {selectedStoreForInfo.store_code} | City: {selectedStoreForInfo.city}
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* Store Information Section */}
+              <div className="bg-slate-50 rounded-lg p-4 mb-4 grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-semibold text-gray-700">Store Name:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.store}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">Store Code:</span>
+                  <p className="text-gray-600 font-mono">{selectedStoreForInfo.store_code}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">City:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.city}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">Priority:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.priority || 'N/A'}</p>
+                </div>
+                <div className="col-span-2">
+                  <span className="font-semibold text-gray-700">Address:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.address || 'N/A'}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">POC:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.poc || 'N/A'}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">POC Number:</span>
+                  <p className="text-gray-600">{selectedStoreForInfo.poc_no || 'N/A'}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">Site Readiness:</span>
+                  <Badge className="mt-1">{selectedStoreForInfo.site_readiness || 'N/A'}</Badge>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-700">Status:</span>
+                  <Badge variant="secondary" className="mt-1">{selectedStoreForInfo.status || 'Active'}</Badge>
+                </div>
+                {selectedStoreForInfo.cancelled_at && (
+                  <div className="col-span-2">
+                    <span className="font-semibold text-gray-700">Cancellation Remarks:</span>
+                    <p className="text-gray-600">{selectedStoreForInfo.cancel_remarks || 'N/A'}</p>
+                  </div>
+                )}
+              </div>
+
+              <Tabs defaultValue="info" className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="info">Info</TabsTrigger>
+                  <TabsTrigger value="devices">Devices ({deviceList.length})</TabsTrigger>
+                  <TabsTrigger value="heatmaps">Heatmaps ({heatmapFiles.length})</TabsTrigger>
+                  <TabsTrigger value="documents">Documents ({documentFiles.length})</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="info" className="mt-4">
+                  <div className="bg-blue-50 rounded-lg p-4 text-sm space-y-2">
+                    <div className="flex justify-between">
+                      <span className="font-medium">Created:</span>
+                      <span>{new Date(selectedStoreForInfo.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Total Devices:</span>
+                      <span>{selectedStoreForInfo.deviceCount || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-medium">Floor Plan:</span>
+                      {loadingFloorPlan ? (
+                        <span className="text-sm text-muted-foreground">Loading...</span>
+                      ) : floorPlanUrls.length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                          {floorPlanUrls.map((file) => (
+                            <a
+                              key={file.name}
+                              href={file.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-600 hover:underline flex items-center gap-1"
+                            >
+                              <Eye className="h-3 w-3" />
+                              View Floor Plan
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <Badge variant="outline">No Floor Plan</Badge>
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="devices" className="mt-4">
+                  {loadingDevices ? (
+                    <div className="text-center py-8">Loading devices...</div>
+                  ) : deviceList.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No devices allocated to this store yet.
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Make</TableHead>
+                          <TableHead>Model</TableHead>
+                          <TableHead>Serial Number</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {deviceList.map((device) => (
+                          <TableRow key={device.id}>
+                            <TableCell className="font-medium">{device.type}</TableCell>
+                            <TableCell>{device.make}</TableCell>
+                            <TableCell>{device.model || '-'}</TableCell>
+                            <TableCell className="font-mono text-sm">{device.serial}</TableCell>
+                            <TableCell>
+                              <Badge variant={device.in_use ? "default" : "secondary"}>
+                                {device.in_use ? "In Use" : "Free"}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="heatmaps" className="mt-4">
+                  {loadingHeatmaps ? (
+                    <div className="text-center py-8">Loading heatmaps...</div>
+                  ) : heatmapFiles.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No heatmaps available for this store.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {heatmapFiles.map((file) => {
+                        const isPDF = file.name.toLowerCase().endsWith('.pdf');
+                        const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+                        return (
+                          <div key={file.name} className="border rounded-lg p-4">
+                            {isPDF ? (
+                              <a
+                                href={file.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline flex items-center gap-2"
+                              >
+                                📄 Open PDF: {file.name}
+                              </a>
+                            ) : isImage ? (
+                              <div className="flex flex-col gap-2">
+                                <span className="text-sm font-medium">{file.name}</span>
+                                <img
+                                  src={file.url}
+                                  alt={file.name}
+                                  className="max-w-full max-h-96 rounded border"
+                                />
+                              </div>
+                            ) : (
+                              <a
+                                href={file.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                📎 {file.name}
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="documents" className="mt-4">
+                  {loadingDocuments ? (
+                    <div className="text-center py-8">Loading documents...</div>
+                  ) : documentFiles.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No documents attached to this store.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {documentFiles.map((file) => {
+                        const isPDF = file.name.toLowerCase().endsWith('.pdf');
+                        const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+                        return (
+                          <div key={file.name} className="border rounded-lg p-3 flex items-center justify-between hover:bg-gray-50">
+                            <div className="flex items-center gap-3 flex-1">
+                              {isPDF && <span className="text-lg">📄</span>}
+                              {isImage && <span className="text-lg">🖼️</span>}
+                              {!isPDF && !isImage && <span className="text-lg">📎</span>}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{file.name}</p>
+                                {file.created_at && (
+                                  <p className="text-xs text-gray-500">
+                                    {new Date(file.created_at).toLocaleString()}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <a
+                              href={file.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-2 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                            >
+                              Open
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

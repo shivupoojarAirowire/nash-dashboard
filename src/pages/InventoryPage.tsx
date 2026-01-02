@@ -38,6 +38,7 @@ export default function InventoryPage() {
   
   // All state declarations MUST come before any conditional returns
   const [items, setItems] = useState<InventoryItem[]>(initialInventory);
+  const [userDepartment, setUserDepartment] = useState<string | null>(null);
   const [stores, setStores] = useState<Array<{ store_code: string; store: string; city: string }>>([]);
   const [nextId, setNextId] = useState(1);
   const [open, setOpen] = useState(false);
@@ -76,12 +77,28 @@ export default function InventoryPage() {
     Firewall: { total: 0, inUse: 0, free: 0 },
   });
   
-  // Feature flag check with useEffect
+  // Load user department
   useEffect(() => {
-    if (!loading && !has('Inventory')) {
+    const loadDepartment = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('department')
+          .eq('id', user.id)
+          .single();
+        if (data) setUserDepartment(data.department);
+      }
+    };
+    loadDepartment();
+  }, []);
+
+  // Feature flag check with useEffect - allow admin and PMO departments
+  useEffect(() => {
+    if (!loading && userDepartment !== null && !has('Inventory') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
       navigate('/');
     }
-  }, [loading, has, navigate]);
+  }, [loading, has, navigate, userDepartment]);
 
   // Load stores from database
   useEffect(() => {

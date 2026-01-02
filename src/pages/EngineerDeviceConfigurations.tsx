@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Settings, Eye, Play, CheckCircle } from "lucide-react";
+import { Settings, Eye, Play, CheckCircle, Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getInventory } from "@/integrations/supabase/inventory";
 import { useToast } from "@/hooks/use-toast";
@@ -20,12 +20,13 @@ type SiteAssignment = {
   store_name: string;
   status: string;
   config_status?: string | null;
-  deadline_at?: string | null;
+  config_deadline_at?: string | null;
   devicesAllocated: number;
   allocatedDevices?: InventoryItem[];
   aps_needed?: number | null;
   firewall_ip?: string | null;
   zonal_port_number?: string | null;
+  device_config?: any;
 };
 
 type InventoryItem = {
@@ -160,13 +161,13 @@ export default function EngineerDeviceConfigurations() {
         return;
       }
 
-      // Load site assignments assigned to this engineer
+      // Load site assignments assigned to this engineer for device configuration
       const { data, error } = await supabase
         .from('site_assignments')
-        .select('id, city, store_code, store_id, status, config_status, deadline_at, aps_needed, firewall_ip, zonal_port_number')
-        .eq('assigned_to', user.id)
+        .select('id, city, store_code, store_id, status, config_status, config_deadline_at, aps_needed, firewall_ip, zonal_port_number, device_config')
+        .eq('config_assigned_to', user.id)
         .eq('status', 'Done')
-        .order('deadline_at', { ascending: true });
+        .order('config_deadline_at', { ascending: true });
 
       if (error) throw error;
 
@@ -190,14 +191,14 @@ export default function EngineerDeviceConfigurations() {
       // Build sites list (show all assigned sites, even without devices)
       const sitesList: SiteAssignment[] = (data || []).map((s: any) => {
         const allocatedDevices = (inventory || [])
-          .filter((i: any) => i.site === s.store_code && i.in_use)
+          .filter((i: any) => i.store_code === s.store_code && i.in_use)
           .map((d: any) => ({
             id: d.id,
             type: d.type,
             make: d.make,
             serial: d.serial,
             in_use: d.in_use,
-            site: d.site,
+            site: d.store_code,
           }));
 
         return {
@@ -207,12 +208,13 @@ export default function EngineerDeviceConfigurations() {
           store_name: storeMap[s.store_id] || '-',
           status: s.status,
           config_status: s.config_status ?? 'Not Started',
-          deadline_at: s.deadline_at,
+          config_deadline_at: s.config_deadline_at,
           devicesAllocated: allocatedDevices.length,
           allocatedDevices: allocatedDevices,
           aps_needed: s.aps_needed ?? null,
           firewall_ip: s.firewall_ip ?? null,
           zonal_port_number: s.zonal_port_number ?? null,
+          device_config: s.device_config ?? null,
         };
       });
 
@@ -260,7 +262,7 @@ export default function EngineerDeviceConfigurations() {
     }
   };
 
-  const openCompleteDialog = (site: SiteAssignment) => {
+  const openCompleteDialog = (site: SiteAssignment, isEdit = false) => {
     console.log('Opening complete dialog for site:', site);
     console.log('Available inventory counts:', {
       switches: availableSwitches.length,
@@ -273,17 +275,44 @@ export default function EngineerDeviceConfigurations() {
     
     setCompletingSite(site);
     
-    // Initialize device fields with empty strings (Select needs string values)
-    setSwitchMake('');
-    setSwitchModel('');
-    setSwitchSerial('');
-    setFirewallMake('');
-    setFirewallModel('');
-    setFirewallSerial('');
-    
-    // Initialize access points array based on APs needed
-    const apsCount = site.aps_needed || 0;
-    setAccessPoints(Array(apsCount).fill(null).map(() => ({ make: '', model: '', serial: '' })));
+    // If editing existing configuration, pre-fill with saved data
+    if (isEdit && site.device_config) {
+      const config = site.device_config;
+      
+      // Load Switch data
+      setSwitchMake(config.switch?.make || '');
+      setSwitchModel(config.switch?.model || '');
+      setSwitchSerial(config.switch?.serial || '');
+      
+      // Load Firewall data
+      setFirewallMake(config.firewall?.make || '');
+      setFirewallModel(config.firewall?.model || '');
+      setFirewallSerial(config.firewall?.serial || '');
+      
+      // Load Access Points data
+      if (config.accessPoints && Array.isArray(config.accessPoints)) {
+        setAccessPoints(config.accessPoints.map((ap: any) => ({
+          make: ap.make || '',
+          model: ap.model || '',
+          serial: ap.serial || ''
+        })));
+      } else {
+        const apsCount = site.aps_needed || 0;
+        setAccessPoints(Array(apsCount).fill(null).map(() => ({ make: '', model: '', serial: '' })));
+      }
+    } else {
+      // Initialize device fields with empty strings (Select needs string values)
+      setSwitchMake('');
+      setSwitchModel('');
+      setSwitchSerial('');
+      setFirewallMake('');
+      setFirewallModel('');
+      setFirewallSerial('');
+      
+      // Initialize access points array based on APs needed
+      const apsCount = site.aps_needed || 0;
+      setAccessPoints(Array(apsCount).fill(null).map(() => ({ make: '', model: '', serial: '' })));
+    }
     
     setCompleteDialogOpen(true);
   };
@@ -363,6 +392,11 @@ export default function EngineerDeviceConfigurations() {
 
       if (switchError) {
         console.error('Error updating switch in inventory:', switchError);
+        toast({
+          title: 'Warning',
+          description: `Switch ${switchSerial} may not be in inventory`,
+          variant: 'destructive'
+        });
       }
 
       // Update Firewall
@@ -377,6 +411,11 @@ export default function EngineerDeviceConfigurations() {
 
       if (firewallError) {
         console.error('Error updating firewall in inventory:', firewallError);
+        toast({
+          title: 'Warning',
+          description: `Firewall ${firewallSerial} may not be in inventory`,
+          variant: 'destructive'
+        });
       }
 
       // Update Access Points
@@ -467,7 +506,7 @@ export default function EngineerDeviceConfigurations() {
                 </TableHeader>
                 <TableBody>
                   {sites.map((site) => {
-                    const isOverdue = site.deadline_at && new Date(site.deadline_at) < new Date();
+                    const isOverdue = site.config_deadline_at && new Date(site.config_deadline_at) < new Date();
                     const configStatus = site.config_status || 'Not Started';
                     return (
                       <TableRow key={site.id}>
@@ -489,9 +528,9 @@ export default function EngineerDeviceConfigurations() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {site.deadline_at ? (
+                          {site.config_deadline_at ? (
                             <span className={isOverdue ? 'text-red-600 font-medium' : ''}>
-                              {new Date(site.deadline_at).toLocaleDateString()}
+                              {new Date(site.config_deadline_at).toLocaleDateString()}
                             </span>
                           ) : (
                             <span className="text-xs text-muted-foreground">-</span>
@@ -532,13 +571,25 @@ export default function EngineerDeviceConfigurations() {
                               </Button>
                             )}
                             {configStatus === 'In Progress' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => openCompleteDialog(site)}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  Complete
+                                </Button>
+                              </>
+                            )}
+                            {configStatus === 'Completed' && (
                               <Button
                                 size="sm"
-                                variant="default"
-                                onClick={() => openCompleteDialog(site)}
+                                variant="outline"
+                                onClick={() => openCompleteDialog(site, true)}
                               >
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Complete
+                                <Pencil className="h-4 w-4 mr-1" />
+                                Edit
                               </Button>
                             )}
                           </div>
@@ -667,17 +718,17 @@ export default function EngineerDeviceConfigurations() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="switchSerial">Serial Number (type 4+ chars)</Label>
+                <div className="space-y-1 relative">
+                  <Label htmlFor="switchSerial">Serial Number</Label>
                   <Input
                     id="switchSerial"
-                    placeholder="Type at least 4 characters..."
+                    placeholder="Type to search available switches..."
                     value={switchSerial}
                     onChange={(e) => {
                       const value = e.target.value;
                       setSwitchSerial(value);
                       // Auto-fill make and model when serial is selected from list
-                      if (value.length >= 4) {
+                      if (value.length > 0) {
                         const device = availableSwitches.find((s: any) => s.serial === value);
                         if (device) {
                           setSwitchMake(device.make);
@@ -685,21 +736,34 @@ export default function EngineerDeviceConfigurations() {
                         }
                       }
                     }}
-                    list={switchSerial.length >= 4 ? "switchSerialList" : undefined}
+                    list="switchSerialList"
                   />
-                  {switchSerial.length >= 4 && (
-                    <datalist id="switchSerialList">
-                      {availableSwitches
-                        .filter((s: any) => 
-                          s.serial.toLowerCase().includes(switchSerial.toLowerCase()) &&
-                          (!switchMake || s.make === switchMake) && 
-                          (!switchModel || s.model === switchModel)
-                        )
-                        .map((s: any) => (
-                          <option key={s.serial} value={s.serial} />
-                        ))}
-                    </datalist>
+                  <datalist id="switchSerialList">
+                    {availableSwitches
+                      .filter((s: any) => 
+                        !switchSerial || s.serial.toLowerCase().includes(switchSerial.toLowerCase())
+                      )
+                      .filter((s: any) => 
+                        (!switchMake || s.make === switchMake) && 
+                        (!switchModel || s.model === switchModel)
+                      )
+                      .slice(0, 20)
+                      .map((s: any) => (
+                        <option key={s.serial} value={s.serial}>
+                          {s.make} {s.model} - {s.serial}
+                        </option>
+                      ))}
+                  </datalist>
+                  {switchSerial && availableSwitches.filter((s: any) => 
+                    s.serial.toLowerCase().includes(switchSerial.toLowerCase()) &&
+                    (!switchMake || s.make === switchMake) && 
+                    (!switchModel || s.model === switchModel)
+                  ).length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">⚠️ No available switches match this serial</p>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    {availableSwitches.length} available in inventory (not in use)
+                  </p>
                 </div>
               </div>
             </div>
@@ -770,17 +834,17 @@ export default function EngineerDeviceConfigurations() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="firewallSerial">Serial Number (type 4+ chars)</Label>
+                <div className="space-y-1 relative">
+                  <Label htmlFor="firewallSerial">Serial Number</Label>
                   <Input
                     id="firewallSerial"
-                    placeholder="Type at least 4 characters..."
+                    placeholder="Type to search available firewalls..."
                     value={firewallSerial}
                     onChange={(e) => {
                       const value = e.target.value;
                       setFirewallSerial(value);
                       // Auto-fill make and model when serial is selected from list
-                      if (value.length >= 4) {
+                      if (value.length > 0) {
                         const device = availableFirewalls.find((f: any) => f.serial === value);
                         if (device) {
                           setFirewallMake(device.make);
@@ -788,21 +852,34 @@ export default function EngineerDeviceConfigurations() {
                         }
                       }
                     }}
-                    list={firewallSerial.length >= 4 ? "firewallSerialList" : undefined}
+                    list="firewallSerialList"
                   />
-                  {firewallSerial.length >= 4 && (
-                    <datalist id="firewallSerialList">
-                      {availableFirewalls
-                        .filter((f: any) => 
-                          f.serial.toLowerCase().includes(firewallSerial.toLowerCase()) &&
-                          (!firewallMake || f.make === firewallMake) && 
-                          (!firewallModel || f.model === firewallModel)
-                        )
-                        .map((f: any) => (
-                          <option key={f.serial} value={f.serial} />
-                        ))}
-                    </datalist>
+                  <datalist id="firewallSerialList">
+                    {availableFirewalls
+                      .filter((f: any) => 
+                        !firewallSerial || f.serial.toLowerCase().includes(firewallSerial.toLowerCase())
+                      )
+                      .filter((f: any) => 
+                        (!firewallMake || f.make === firewallMake) && 
+                        (!firewallModel || f.model === firewallModel)
+                      )
+                      .slice(0, 20)
+                      .map((f: any) => (
+                        <option key={f.serial} value={f.serial}>
+                          {f.make} {f.model} - {f.serial}
+                        </option>
+                      ))}
+                  </datalist>
+                  {firewallSerial && availableFirewalls.filter((f: any) => 
+                    f.serial.toLowerCase().includes(firewallSerial.toLowerCase()) &&
+                    (!firewallMake || f.make === firewallMake) && 
+                    (!firewallModel || f.model === firewallModel)
+                  ).length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">⚠️ No available firewalls match this serial</p>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    {availableFirewalls.length} available in inventory (not in use)
+                  </p>
                 </div>
               </div>
             </div>
@@ -884,17 +961,17 @@ export default function EngineerDeviceConfigurations() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <div className="space-y-1">
-                          <Label htmlFor={`apSerial${index}`}>Serial Number (type 4+ chars)</Label>
+                        <div className="space-y-1 relative">
+                          <Label htmlFor={`apSerial${index}`}>Serial Number</Label>
                           <Input
                             id={`apSerial${index}`}
-                            placeholder="Type at least 4 characters..."
+                            placeholder="Type to search available APs..."
                             value={ap.serial}
                             onChange={(e) => {
                               const value = e.target.value;
                               updateAccessPoint(index, 'serial', value);
                               // Auto-fill make and model when serial is selected from list
-                              if (value.length >= 4) {
+                              if (value.length > 0) {
                                 const device = availableAPs.find((a: any) => a.serial === value);
                                 if (device) {
                                   updateAccessPoint(index, 'make', device.make);
@@ -902,21 +979,35 @@ export default function EngineerDeviceConfigurations() {
                                 }
                               }
                             }}
-                            list={ap.serial.length >= 4 ? `apSerialList${index}` : undefined}
+                            list={`apSerialList${index}`}
                           />
-                          {ap.serial.length >= 4 && (
-                            <datalist id={`apSerialList${index}`}>
-                              {availableAPs
-                                .filter((a: any) => 
-                                  a.serial.toLowerCase().includes(ap.serial.toLowerCase()) &&
-                                  (!ap.make || a.make === ap.make) && 
-                                  (!ap.model || a.model === ap.model)
-                                )
-                                .map((a: any) => (
-                                  <option key={a.serial} value={a.serial} />
-                                ))}
-                            </datalist>
+                          <datalist id={`apSerialList${index}`}>
+                            {availableAPs
+                              .filter((a: any) => 
+                                !ap.serial || a.serial.toLowerCase().includes(ap.serial.toLowerCase())
+                              )
+                              .filter((a: any) => 
+                                (!ap.make || a.make === ap.make) && 
+                                (!ap.model || a.model === ap.model)
+                              )
+                              .slice(0, 20)
+                              .map((a: any) => (
+                                <option key={a.serial} value={a.serial}>
+                                  {a.make} {a.model} - {a.serial}
+                                </option>
+                              ))}
+                          </datalist>
+                          {ap.serial && availableAPs
+                            .filter((a: any) => 
+                              a.serial.toLowerCase().includes(ap.serial.toLowerCase())
+                            )
+                            .filter((a: any) => 
+                              (!ap.make || a.make === ap.make) && 
+                              (!ap.model || a.model === ap.model)
+                            ).length === 0 && (
+                            <p className="text-xs text-amber-600 mt-1">⚠️ No available APs match this serial</p>
                           )}
+                          <p className="text-xs text-muted-foreground">{availableAPs.length} available in inventory (not in use)</p>
                         </div>
                       </div>
                     </div>
