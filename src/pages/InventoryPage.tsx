@@ -20,6 +20,7 @@ type InventoryItem = {
   make: string;
   model?: string; // Device model
   serial: string;
+  price?: number; // Price of the item
   // New fields
   inUse?: boolean;
   storeCode?: string; // Foreign key to stores.store_code
@@ -273,6 +274,7 @@ export default function InventoryPage() {
         make: item.make,
         model: item.model || null,
         serial: item.serial,
+        price: item.price || null,
         in_use: !!item.inUse,
         store_code: item.storeCode || null,
         arrival_date: item.arrivalDate ? item.arrivalDate : null,
@@ -303,6 +305,7 @@ export default function InventoryPage() {
           make: updatedItem.make,
           model: updatedItem.model || null,
           serial: updatedItem.serial,
+          price: updatedItem.price || null,
           in_use: updatedItem.inUse,
           store_code: updatedItem.storeCode || null,
           arrival_date: updatedItem.arrivalDate || null,
@@ -468,10 +471,12 @@ export default function InventoryPage() {
                   make: HTMLInputElement;
                   model: HTMLInputElement;
                   serial: HTMLInputElement;
+                  price: HTMLInputElement;
                 };
                 const make = form.make.value || "";
                 const model = form.model.value || "";
                 const serial = form.serial.value || "";
+                const price = form.price.value ? parseFloat(form.price.value) : undefined;
 
                 if (!make || !serial) return;
 
@@ -488,6 +493,7 @@ export default function InventoryPage() {
                     make,
                     model,
                     serial,
+                    price,
                     inUse,
                     storeCode: selectedStoreCode,
                     storeName: selectedStore?.store || "",
@@ -534,6 +540,9 @@ export default function InventoryPage() {
 
                 <label className="text-sm">Serial Number</label>
                 <Input name="serial" />
+
+                <label className="text-sm">Price (₹)</label>
+                <Input name="price" type="number" step="0.01" placeholder="0.00" />
 
                 <div className="flex items-center gap-2">
                   <input
@@ -816,6 +825,9 @@ export default function InventoryPage() {
                 <TableHead onClick={() => handleSort('serial')} className="cursor-pointer hover:bg-muted/50">
                   <div className="flex items-center">Serial {getSortIcon('serial')}</div>
                 </TableHead>
+                <TableHead onClick={() => handleSort('price')} className="cursor-pointer hover:bg-muted/50">
+                  <div className="flex items-center">Price {getSortIcon('price')}</div>
+                </TableHead>
                 <TableHead onClick={() => handleSort('inUse')} className="cursor-pointer hover:bg-muted/50">
                   <div className="flex items-center">In Use {getSortIcon('inUse')}</div>
                 </TableHead>
@@ -847,6 +859,7 @@ export default function InventoryPage() {
                   <TableCell>{it.make}</TableCell>
                   <TableCell>{it.model || '-'}</TableCell>
                   <TableCell className="font-mono text-sm">{it.serial}</TableCell>
+                  <TableCell>{it.price ? `₹${it.price.toFixed(2)}` : '-'}</TableCell>
                   <TableCell>{it.inUse ? "✓" : "✗"}</TableCell>
                   <TableCell>{it.storeCode || '-'}</TableCell>
                   <TableCell>{it.city || '-'}</TableCell>
@@ -1003,6 +1016,7 @@ export default function InventoryPage() {
                   make: HTMLInputElement;
                   model: HTMLInputElement;
                   serial: HTMLInputElement;
+                  price: HTMLInputElement;
                   inUse: HTMLInputElement;
                   arrivalDate: HTMLInputElement;
                   assignedDate: HTMLInputElement;
@@ -1015,6 +1029,7 @@ export default function InventoryPage() {
                   make: form.make.value,
                   model: form.model.value,
                   serial: form.serial.value,
+                  price: form.price.value ? parseFloat(form.price.value) : undefined,
                   inUse: form.inUse.checked,
                   storeCode: selectedStore?.store_code,
                   storeName: selectedStore?.store,
@@ -1048,6 +1063,9 @@ export default function InventoryPage() {
 
                 <label className="text-sm">Serial Number</label>
                 <Input name="serial" defaultValue={selectedItem.serial} />
+
+                <label className="text-sm">Price (₹)</label>
+                <Input name="price" type="number" step="0.01" defaultValue={selectedItem.price || ''} />
 
                 <div className="flex items-center gap-2">
                   <input

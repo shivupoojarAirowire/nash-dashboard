@@ -134,7 +134,7 @@ export default function Auth() {
           ...(userType === "airowire" ? { department } : { address }),
         });
 
-        const redirectUrl = `${window.location.origin}/`;
+        const redirectUrl = `https://naas.airowire.com/`;
         
         // Determine role based on user type
         // Airowire users get 'user' role, vendors get 'vendor', customers get 'customer'
@@ -238,7 +238,7 @@ export default function Auth() {
     setResetLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth?mode=recovery`,
+        redirectTo: `https://naas.airowire.com/auth?mode=recovery`,
       });
 
       if (error) throw error;
@@ -269,11 +269,11 @@ export default function Auth() {
 
     setOtpLoading(true);
     try {
-      // Use Supabase passwordless sign in with OTP
+      // Use Supabase passwordless sign in with OTP (6-digit code only, no magic link)
       const { error } = await supabase.auth.signInWithOtp({
         email: otpEmail,
         options: {
-          emailRedirectTo: `${window.location.origin}/`,
+          shouldCreateUser: true,
         },
       });
 
@@ -282,7 +282,7 @@ export default function Auth() {
       setOtpSent(true);
       toast({
         title: "OTP Sent",
-        description: "Check your email for the one-time password",
+        description: "Check your email for the 6-digit one-time password",
       });
     } catch (err: any) {
       toast({
@@ -316,6 +316,10 @@ export default function Auth() {
         title: "Success",
         description: "Logged in successfully via OTP",
       });
+      
+      // Redirect to dashboard
+      navigate('/');
+      
       setShowOtpAuth(false);
       setOtp("");
       setOtpEmail("");

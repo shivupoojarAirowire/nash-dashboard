@@ -1,5 +1,5 @@
 import { MetricCard } from "@/components/MetricCard";
-import { Building2, Network, Package, TrendingUp, Activity, Wifi, CheckCircle2 } from "lucide-react";
+import { Building2, Network, Package, TrendingUp, Activity, Wifi, CheckCircle2, Map } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const Dashboard = () => {
+  const [userDepartment, setUserDepartment] = useState<string | null>(null);
   const [storesCount, setStoresCount] = useState(0);
   const [inventoryStats, setInventoryStats] = useState({
     total: 0,
@@ -25,6 +26,33 @@ const Dashboard = () => {
     accessPoints: 0,
   });
   const [recentStores, setRecentStores] = useState<any[]>([]);
+  const [heatmapStats, setHeatmapStats] = useState({
+    total: 0,
+    completed: 0,
+    pending: 0,
+    inProgress: 0,
+  });
+  const [deviceConfigStats, setDeviceConfigStats] = useState({
+    total: 0,
+    configured: 0,
+    pending: 0,
+  });
+
+  // Fetch current user's department
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('department')
+          .eq('id', user.id)
+          .single();
+        
+        setUserDepartment(profile?.department || null);
+      }
+    })();
+  }, []);
 
   // Fetch stores count
   useEffect(() => {
@@ -109,6 +137,84 @@ const Dashboard = () => {
       }
     })();
   }, []);
+
+  // Fetch heatmap stats for Engineering users
+  useEffect(() => {
+    if (userDepartment !== 'Engineering') return;
+    
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Get total assignments for this user
+      const { count: totalCount } = await supabase
+        .from('site_assignments')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to', user.id);
+
+      // Get completed
+      const { count: completedCount } = await supabase
+        .from('site_assignments')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to', user.id)
+        .eq('status', 'Done');
+
+      // Get in progress
+      const { count: inProgressCount } = await supabase
+        .from('site_assignments')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to', user.id)
+        .eq('status', 'In Progress');
+
+      // Get pending
+      const { count: pendingCount } = await supabase
+        .from('site_assignments')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to', user.id)
+        .eq('status', 'Pending');
+
+      setHeatmapStats({
+        total: totalCount || 0,
+        completed: completedCount || 0,
+        inProgress: inProgressCount || 0,
+        pending: pendingCount || 0,
+      });
+    })();
+  }, [userDepartment]);
+
+  // Fetch device configuration stats for Engineering users
+  useEffect(() => {
+    if (userDepartment !== 'Engineering') return;
+    
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Get all assignments for this user
+      const { data: assignments } = await supabase
+        .from('site_assignments')
+        .select('device_config')
+        .eq('assigned_to', user.id);
+
+      if (!assignments) {
+        setDeviceConfigStats({ total: 0, configured: 0, pending: 0 });
+        return;
+      }
+
+      const total = assignments.length;
+      // Count assignments with device_config populated (not null and not empty)
+      const configured = assignments.filter(
+        (a) => a.device_config && Object.keys(a.device_config).length > 0
+      ).length;
+
+      setDeviceConfigStats({
+        total,
+        configured,
+        pending: total - configured,
+      });
+    })();
+  }, [userDepartment]);
+
   // Project metrics data with refined colors
   const siteData = [
     { name: 'Existing', value: 72, fill: '#10b981' },
@@ -156,6 +262,110 @@ const Dashboard = () => {
     );
   };
 
+  // Engineering Dashboard
+  if (userDepartment === 'Engineering') {
+    const heatmapChartData = [
+      { name: 'Completed', value: heatmapStats.completed, fill: '#10b981' },
+      { name: 'In Progress', value: heatmapStats.inProgress, fill: '#f59e0b' },
+      { name: 'Pending', value: heatmapStats.pending, fill: '#ef4444' },
+    ];
+
+    const deviceConfigChartData = [
+      { name: 'Configured', value: deviceConfigStats.configured, fill: '#10b981' },
+      { name: 'Pending', value: deviceConfigStats.pending, fill: '#ef4444' },
+    ];
+
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <div className="flex items-center gap-4">
+          <SidebarTrigger className="h-8 w-8" />
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-foreground">Engineering Dashboard</h1>
+            <p className="text-muted-foreground">
+              Your heatmap assignments and device configurations
+            </p>
+          </div>
+        </div>
+
+        {/* Engineering Metrics */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <MetricCard
+            title="Total Heatmap Assignments"
+            value={heatmapStats.total.toString()}
+            icon={Map}
+            description={`${heatmapStats.completed} completed`}
+          />
+          <MetricCard
+            title="Device Configurations"
+            value={deviceConfigStats.total.toString()}
+            icon={Network}
+            description={`${deviceConfigStats.configured} configured`}
+          />
+        </div>
+
+        {/* Charts */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Heatmap Status</CardTitle>
+              <CardDescription>Distribution of your heatmap assignments by status</CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center">
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={heatmapChartData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={renderCustomLabel}
+                    outerRadius={100}
+                    dataKey="value"
+                  >
+                    {heatmapChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Device Configuration Status</CardTitle>
+              <CardDescription>Configuration progress for assigned devices</CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center">
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={deviceConfigChartData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={renderCustomLabel}
+                    outerRadius={100}
+                    dataKey="value"
+                  >
+                    {deviceConfigChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Default Dashboard for non-Engineering users
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center gap-4">
