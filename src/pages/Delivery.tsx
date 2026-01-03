@@ -711,6 +711,130 @@ const Inventory = () => {
     });
   };
 
+  const handleTrackPendingDeliveries = async () => {
+    // Get all pending deliveries
+    const pendingDeliveries = deliveryTracking.filter(
+      (item) => item.delivery_status === "Pending" && item.consignment_number
+    );
+
+    if (pendingDeliveries.length === 0) {
+      toast({
+        title: "No Pending Deliveries",
+        description: "There are no pending deliveries to track.",
+        variant: "default",
+      });
+      return;
+    }
+
+    toast({
+      title: "Tracking Pending Deliveries",
+      description: `Starting to track ${pendingDeliveries.length} pending delivery(ies)...`,
+    });
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+    console.log('Supabase URL:', supabaseUrl);
+
+    // Track each pending delivery
+    for (const item of pendingDeliveries) {
+      try {
+        console.log(`Tracking delivery: ${item.consignment_number}`);
+        
+        // Call the Edge Function
+        const response = await fetch(
+          `${supabaseUrl}/functions/v1/track-delivery`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              consignment_number: item.consignment_number
+            })
+          }
+        );
+
+        console.log(`Response status for ${item.consignment_number}: ${response.status}`);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`Edge Function error for ${item.consignment_number}: ${response.status}`, errorText);
+          failureCount++;
+          continue;
+        }
+
+        const trackingResult = await response.json();
+        console.log(`Tracking result for ${item.consignment_number}:`, trackingResult);
+
+        if (!trackingResult.success) {
+          console.error(`Tracking failed for ${item.consignment_number}:`, trackingResult.error);
+          failureCount++;
+          continue;
+        }
+
+        const latestStatus = trackingResult.status;
+        const latestRemarks = trackingResult.remarks;
+        const deliveredDate = trackingResult.deliveredDate;
+        const podUrl = trackingResult.podUrl;
+
+        console.log(`Extracted status: ${latestStatus}, Remarks: ${latestRemarks}`);
+
+        if (latestStatus) {
+          const updatePayload: any = {
+            delivery_status: latestStatus,
+            comments: latestRemarks || item.comments
+          };
+
+          // Only update delivered_date if status is Delivered
+          if (latestStatus === 'Delivered' && deliveredDate) {
+            updatePayload.delivered_date = deliveredDate;
+          }
+
+          // Update pod_url if available
+          if (podUrl) {
+            updatePayload.pod_url = podUrl;
+          }
+
+          console.log(`Updating database for ${item.id} with:`, updatePayload);
+
+          const { data, error } = await supabase
+            .from('delivery_tracking')
+            .update(updatePayload)
+            .eq('id', item.id)
+            .select();
+
+          if (error) {
+            console.error(`Database update error for ${item.id}:`, error);
+            failureCount++;
+          } else {
+            console.log(`Successfully updated ${item.id}`);
+            successCount++;
+          }
+        } else {
+          console.warn(`No status found in tracking result for ${item.consignment_number}`);
+          failureCount++;
+        }
+      } catch (error) {
+        console.error(`Error tracking delivery ${item.consignment_number}:`, error);
+        failureCount++;
+      }
+    }
+
+    // Reload data from database
+    console.log('Reloading delivery tracking data...');
+    await loadDeliveryTracking();
+
+    // Show results
+    toast({
+      title: "Tracking Complete",
+      description: `Successfully tracked and updated: ${successCount}, Failed: ${failureCount}, Total: ${pendingDeliveries.length}`,
+      variant: successCount > 0 ? "default" : "destructive",
+    });
+  };
+
 
 
   if (!loading && userDepartment !== null && !has('Inventory') && !has('Delivery') && userDepartment !== 'admin' && userDepartment !== 'PMO') {
@@ -818,6 +942,10 @@ const Inventory = () => {
                   <Button onClick={() => fileInputRef.current?.click()}>
                     <Upload className="h-4 w-4 mr-2" />
                     Bulk Upload
+                  </Button>
+                  <Button variant="secondary" onClick={handleTrackPendingDeliveries}>
+                    <Truck className="h-4 w-4 mr-2" />
+                    Track Pending
                   </Button>
                   <input
                     ref={fileInputRef}

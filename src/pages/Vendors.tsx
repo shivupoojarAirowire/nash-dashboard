@@ -17,16 +17,14 @@ import { Truck, CheckCircle2, Clock, DollarSign, Plus, Edit, Package, Trash2, Ph
 
 type Vendor = {
   id: string;
-  vendor_id: string;
-  name: string;
+  vendor_id?: string;
   company: string;
-  email: string;
+  name: string;
   phone: string;
   city: string;
-  address: string;
-  expertise: string[];
+  operational_area: string;
+  service_type: string;
   status: 'Active' | 'Inactive';
-  rating: number;
   created_at: string;
 };
 
@@ -46,14 +44,15 @@ type VendorTask = {
   notes?: string;
 };
 
-const expertiseOptions = [
-  'Router Installation',
-  'Switch Configuration',
-  'Firewall Setup',
-  'Access Point Installation',
-  'Network Cabling',
-  'Device Testing',
-  'Site Survey'
+const serviceTypeOptions = [
+  'Mounting',
+  'Mounting/Tech support',
+  'Engineering support/ Mounting',
+  'Passive design/work',
+  'Passive design/work/ISP provider',
+  'Passive Work',
+  'Passive work',
+  'ISP & Engineer support'
 ];
 
 export default function Vendors() {
@@ -78,15 +77,13 @@ export default function Vendors() {
 
   // Form states
   const [vendorForm, setVendorForm] = useState({
-    name: '',
     company: '',
-    email: '',
+    name: '',
     phone: '',
     city: '',
-    address: '',
-    expertise: [] as string[],
-    status: 'Active' as 'Active' | 'Inactive',
-    rating: 5
+    operational_area: '',
+    service_type: '',
+    status: 'Active' as 'Active' | 'Inactive'
   });
 
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -176,15 +173,13 @@ export default function Vendors() {
       setIsEditMode(false);
       setSelectedVendor(null);
       setVendorForm({
-        name: '',
         company: '',
-        email: '',
+        name: '',
         phone: '',
         city: '',
-        address: '',
-        expertise: [],
-        status: 'Active',
-        rating: 5
+        operational_area: '',
+        service_type: '',
+        status: 'Active'
       });
       loadVendors();
     } catch (e) {
@@ -201,15 +196,13 @@ export default function Vendors() {
     setSelectedVendor(vendor);
     setIsEditMode(true);
     setVendorForm({
-      name: vendor.name,
       company: vendor.company,
-      email: vendor.email,
+      name: vendor.name,
       phone: vendor.phone,
       city: vendor.city,
-      address: vendor.address,
-      expertise: vendor.expertise,
-      status: vendor.status,
-      rating: vendor.rating
+      operational_area: vendor.operational_area,
+      service_type: vendor.service_type,
+      status: vendor.status
     });
     setVendorDetailsOpen(false);
     setVendorDialogOpen(true);
@@ -340,15 +333,6 @@ export default function Vendors() {
     }
   };
 
-  const toggleExpertise = (expertise: string) => {
-    setVendorForm(prev => ({
-      ...prev,
-      expertise: prev.expertise.includes(expertise)
-        ? prev.expertise.filter(e => e !== expertise)
-        : [...prev.expertise, expertise]
-    }));
-  };
-
   if (!loading && !has('Vendors')) {
     return (
       <div className="p-6">
@@ -477,14 +461,6 @@ export default function Vendors() {
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <Label>Vendor Name</Label>
-                          <Input
-                            value={vendorForm.name}
-                            onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })}
-                            placeholder="John Doe"
-                          />
-                        </div>
-                        <div>
                           <Label>Company Name</Label>
                           <Input
                             value={vendorForm.company}
@@ -492,84 +468,73 @@ export default function Vendors() {
                             placeholder="ABC Networks"
                           />
                         </div>
+                        <div>
+                          <Label>POC Name</Label>
+                          <Input
+                            value={vendorForm.name}
+                            onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })}
+                            placeholder="John Doe"
+                          />
+                        </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <Label>Email</Label>
-                          <Input
-                            type="email"
-                            value={vendorForm.email}
-                            onChange={(e) => setVendorForm({ ...vendorForm, email: e.target.value })}
-                            placeholder="vendor@example.com"
-                          />
-                        </div>
-                        <div>
-                          <Label>Phone</Label>
+                          <Label>Contact Number</Label>
                           <Input
                             value={vendorForm.phone}
                             onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })}
-                            placeholder="+91 9876543210"
+                            placeholder="9876543210"
                           />
                         </div>
-                      </div>
-                      <div>
-                        <Label>City</Label>
-                        <Input
-                          value={vendorForm.city}
-                          onChange={(e) => setVendorForm({ ...vendorForm, city: e.target.value })}
-                          placeholder="Bangalore"
-                        />
-                      </div>
-                      <div>
-                        <Label>Address</Label>
-                        <Textarea
-                          value={vendorForm.address}
-                          onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })}
-                          placeholder="Complete address"
-                        />
-                      </div>
-                      <div>
-                        <Label>Expertise (Select all that apply)</Label>
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          {expertiseOptions.map((exp) => (
-                            <label key={exp} className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={vendorForm.expertise.includes(exp)}
-                                onChange={() => toggleExpertise(exp)}
-                                className="w-4 h-4"
-                              />
-                              <span className="text-sm">{exp}</span>
-                            </label>
-                          ))}
+                        <div>
+                          <Label>Office Location</Label>
+                          <Input
+                            value={vendorForm.city}
+                            onChange={(e) => setVendorForm({ ...vendorForm, city: e.target.value })}
+                            placeholder="Bangalore"
+                          />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <Label>Status</Label>
+                          <Label>Operational Area</Label>
+                          <Input
+                            value={vendorForm.operational_area}
+                            onChange={(e) => setVendorForm({ ...vendorForm, operational_area: e.target.value })}
+                            placeholder="Pan India"
+                          />
+                        </div>
+                        <div>
+                          <Label>Service Type</Label>
                           <Select
-                            value={vendorForm.status}
-                            onValueChange={(value: 'Active' | 'Inactive') => setVendorForm({ ...vendorForm, status: value })}
+                            value={vendorForm.service_type}
+                            onValueChange={(value) => setVendorForm({ ...vendorForm, service_type: value })}
                           >
                             <SelectTrigger>
-                              <SelectValue />
+                              <SelectValue placeholder="Select service type" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="Active">Active</SelectItem>
-                              <SelectItem value="Inactive">Inactive</SelectItem>
+                              {serviceTypeOptions.map((type) => (
+                                <SelectItem key={type} value={type}>{type}</SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
-                        <div>
-                          <Label>Initial Rating</Label>
-                          <Input
-                            type="number"
-                            min="1"
-                            max="5"
-                            value={vendorForm.rating}
-                            onChange={(e) => setVendorForm({ ...vendorForm, rating: parseInt(e.target.value) || 5 })}
-                          />
-                        </div>
+                      </div>
+                      <div>
+                        <Label>Status</Label>
+                        <Select
+                          value={vendorForm.status}
+                          onValueChange={(value: 'Active' | 'Inactive') => setVendorForm({ ...vendorForm, status: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Active">Active</SelectItem>
+                            <SelectItem value="Inactive">Inactive</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                     <DialogFooter>
@@ -594,12 +559,12 @@ export default function Vendors() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Vendor ID</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Company</TableHead>
-                      <TableHead>City</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Expertise</TableHead>
-                      <TableHead>Rating</TableHead>
+                      <TableHead>Company Name</TableHead>
+                      <TableHead>POC</TableHead>
+                      <TableHead>Contact Number</TableHead>
+                      <TableHead>Office Location</TableHead>
+                      <TableHead>Operational Area</TableHead>
+                      <TableHead>Service Type</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -616,36 +581,15 @@ export default function Vendors() {
                             {vendor.vendor_id || 'N/A'}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-medium">{vendor.name}</TableCell>
-                        <TableCell>{vendor.company}</TableCell>
+                        <TableCell className="font-medium">{vendor.company}</TableCell>
+                        <TableCell>{vendor.name || '-'}</TableCell>
+                        <TableCell>{vendor.phone}</TableCell>
+                        <TableCell>{vendor.city}</TableCell>
+                        <TableCell>{vendor.operational_area || '-'}</TableCell>
                         <TableCell>
-                          <span className="font-medium text-blue-600">{vendor.city}</span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            <div>{vendor.email}</div>
-                            <div className="text-muted-foreground">{vendor.phone}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {vendor.expertise.slice(0, 2).map((exp, i) => (
-                              <Badge key={i} variant="secondary" className="text-xs">
-                                {exp}
-                              </Badge>
-                            ))}
-                            {vendor.expertise.length > 2 && (
-                              <Badge variant="secondary" className="text-xs">
-                                +{vendor.expertise.length - 2}
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <span className="text-yellow-500">★</span>
-                            <span>{vendor.rating}/5</span>
-                          </div>
+                          <Badge variant="outline" className="text-xs">
+                            {vendor.service_type || '-'}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={vendor.status === 'Active' ? 'default' : 'secondary'}>
@@ -919,10 +863,6 @@ export default function Vendors() {
 
               <div className="grid gap-4">
                 <div className="flex items-center gap-3 text-sm">
-                  <Mail className="h-4 w-4 text-muted-foreground" />
-                  <span>{selectedVendor.email}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
                   <Phone className="h-4 w-4 text-muted-foreground" />
                   <span>{selectedVendor.phone}</span>
                 </div>
@@ -930,37 +870,21 @@ export default function Vendors() {
                   <MapPin className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <div className="font-medium">{selectedVendor.city}</div>
-                    <div className="text-muted-foreground">{selectedVendor.address}</div>
+                    <div className="text-muted-foreground text-xs">Office Location</div>
                   </div>
                 </div>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium mb-2 block">Expertise</Label>
-                <div className="flex flex-wrap gap-2">
-                  {selectedVendor.expertise.map((exp, i) => (
-                    <Badge key={i} variant="secondary">
-                      {exp}
-                    </Badge>
-                  ))}
+                <div className="flex items-center gap-3 text-sm">
+                  <Package className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">{selectedVendor.operational_area || 'N/A'}</div>
+                    <div className="text-muted-foreground text-xs">Operational Area</div>
+                  </div>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <div>
-                  <Label className="text-sm font-medium">Rating</Label>
-                  <div className="flex items-center gap-1 mt-1">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <span 
-                        key={star} 
-                        className={`text-lg ${star <= selectedVendor.rating ? 'text-yellow-500' : 'text-gray-300'}`}
-                      >
-                        ★
-                      </span>
-                    ))}
-                    <span className="ml-2 text-sm text-muted-foreground">
-                      {selectedVendor.rating}/5
-                    </span>
+                <div className="flex items-center gap-3 text-sm">
+                  <Truck className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">{selectedVendor.service_type || 'N/A'}</div>
+                    <div className="text-muted-foreground text-xs">Service Type</div>
                   </div>
                 </div>
               </div>
@@ -1008,7 +932,12 @@ export default function Vendors() {
           {vendorToDelete && (
             <div className="py-4">
               <div className="rounded-lg bg-muted p-4 space-y-2">
-                <div className="font-medium">{vendorToDelete.name}</div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="font-mono">
+                    {vendorToDelete.vendor_id || 'N/A'}
+                  </Badge>
+                  <div className="font-medium">{vendorToDelete.name}</div>
+                </div>
                 <div className="text-sm text-muted-foreground">{vendorToDelete.company}</div>
                 <div className="text-sm text-muted-foreground">{vendorToDelete.city}</div>
               </div>

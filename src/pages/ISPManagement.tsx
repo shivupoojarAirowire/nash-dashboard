@@ -13,17 +13,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Wifi, Plus, Edit, Calendar, DollarSign, CheckCircle2, AlertCircle, Upload, Download } from "lucide-react";
+import { Wifi, Plus, Edit, Calendar, DollarSign, CheckCircle2, AlertCircle, Upload, Download, Trash2 } from "lucide-react";
 
 type ISPProvider = {
   id: string;
+  provider_id?: string;
   provider_name: string;
-  city: string;
-  area: string;
-  contact_person: string;
-  contact_email: string;
-  contact_phone: string;
+  city?: string;
+  area?: string;
+  contact_person?: string;
+  contact_email?: string;
+  email?: string;
+  contact_phone?: string;
+  operational_area?: string;
   service_type: string;
+  cost_50mbps?: number;
+  cost_100mbps?: number;
+  cost_150mbps?: number;
+  otc_charges?: number;
   status: 'Active' | 'Inactive';
   created_at: string;
 };
@@ -73,7 +80,7 @@ type StoreISPDetail = {
   };
 };
 
-const serviceTypes = ['Broadband', 'Leased Line', 'MPLS', 'SD-WAN', 'Fiber', 'Wireless'];
+const serviceTypes = ['ISP', 'ISP & Engineer support', 'Broadband', 'Leased Line', 'MPLS', 'SD-WAN', 'Fiber', 'Wireless'];
 const linkTypes = ['Primary', 'Backup', 'Load Balance'];
 const billingCycles = ['Monthly', 'Quarterly', 'Yearly'];
 
@@ -92,18 +99,27 @@ export default function ISPManagement() {
   const [loadingStoreISP, setLoadingStoreISP] = useState(true);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<ISPProvider | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [providerToDelete, setProviderToDelete] = useState<ISPProvider | null>(null);
   const [activeView, setActiveView] = useState<'providers' | 'connections' | 'overview' | 'store-isp' | 'tasks'>('providers');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form states
   const [providerForm, setProviderForm] = useState({
     provider_name: '',
+    contact_person: '',
+    contact_phone: '',
+    email: '',
     city: '',
     area: '',
-    contact_person: '',
-    contact_email: '',
-    contact_phone: '',
-    service_type: 'Broadband',
+    operational_area: '',
+    service_type: 'ISP',
+    cost_50mbps: '',
+    cost_100mbps: '',
+    cost_150mbps: '',
+    otc_charges: '',
     status: 'Active' as 'Active' | 'Inactive'
   });
 
@@ -431,34 +447,74 @@ export default function ISPManagement() {
 
   const handleAddProvider = async () => {
     try {
-      console.log('Attempting to add provider:', providerForm);
+      console.log('Attempting to add/update provider:', providerForm);
       
-      const { data, error } = await supabase
-        .from('isp_providers')
-        .insert([providerForm])
-        .select();
+      // Convert string values to numbers for pricing fields
+      const formData = {
+        provider_name: providerForm.provider_name,
+        contact_person: providerForm.contact_person || null,
+        contact_phone: providerForm.contact_phone || null,
+        email: providerForm.email || null,
+        city: providerForm.city || null,
+        area: providerForm.area || null,
+        operational_area: providerForm.operational_area || null,
+        service_type: providerForm.service_type,
+        cost_50mbps: providerForm.cost_50mbps ? parseFloat(providerForm.cost_50mbps) : null,
+        cost_100mbps: providerForm.cost_100mbps ? parseFloat(providerForm.cost_100mbps) : null,
+        cost_150mbps: providerForm.cost_150mbps ? parseFloat(providerForm.cost_150mbps) : null,
+        otc_charges: providerForm.otc_charges ? parseFloat(providerForm.otc_charges) : null,
+        status: providerForm.status
+      };
+      
+      let data, error;
+      
+      if (isEditMode && selectedProvider) {
+        // Update existing provider
+        const result = await supabase
+          .from('isp_providers')
+          .update(formData)
+          .eq('id', selectedProvider.id)
+          .select();
+        data = result.data;
+        error = result.error;
+      } else {
+        // Insert new provider
+        const result = await supabase
+          .from('isp_providers')
+          .insert([formData])
+          .select();
+        data = result.data;
+        error = result.error;
+      }
 
       if (error) {
         console.error('Database error:', error);
         throw error;
       }
 
-      console.log('Provider added successfully:', data);
+      console.log('Provider saved successfully:', data);
 
       toast({
-        title: "ISP Provider Added",
-        description: "ISP provider has been registered successfully.",
+        title: isEditMode ? "ISP Provider Updated" : "ISP Provider Added",
+        description: isEditMode ? "ISP provider has been updated successfully." : "ISP provider has been registered successfully.",
       });
 
       setProviderDialogOpen(false);
+      setIsEditMode(false);
+      setSelectedProvider(null);
       setProviderForm({
         provider_name: '',
+        contact_person: '',
+        contact_phone: '',
+        email: '',
         city: '',
         area: '',
-        contact_person: '',
-        contact_email: '',
-        contact_phone: '',
-        service_type: 'Broadband',
+        operational_area: '',
+        service_type: 'ISP',
+        cost_50mbps: '',
+        cost_100mbps: '',
+        cost_150mbps: '',
+        otc_charges: '',
         status: 'Active'
       });
       loadProviders();
@@ -467,6 +523,56 @@ export default function ISPManagement() {
       toast({
         title: "Error",
         description: e.message || "Failed to add ISP provider. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditProvider = (provider: ISPProvider) => {
+    setSelectedProvider(provider);
+    setIsEditMode(true);
+    setProviderForm({
+      provider_name: provider.provider_name,
+      contact_person: provider.contact_person || '',
+      contact_phone: provider.contact_phone || '',
+      email: provider.email || provider.contact_email || '',
+      city: provider.city || '',
+      area: provider.area || '',
+      operational_area: provider.operational_area || '',
+      service_type: provider.service_type,
+      cost_50mbps: provider.cost_50mbps?.toString() || '',
+      cost_100mbps: provider.cost_100mbps?.toString() || '',
+      cost_150mbps: provider.cost_150mbps?.toString() || '',
+      otc_charges: provider.otc_charges?.toString() || '',
+      status: provider.status
+    });
+    setProviderDialogOpen(true);
+  };
+
+  const handleDeleteProvider = async () => {
+    if (!providerToDelete) return;
+
+    try {
+      const { error } = await supabase
+        .from('isp_providers')
+        .delete()
+        .eq('id', providerToDelete.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "ISP Provider Deleted",
+        description: "ISP provider has been removed successfully.",
+      });
+
+      setDeleteDialogOpen(false);
+      setProviderToDelete(null);
+      loadProviders();
+    } catch (e: any) {
+      console.error('handleDeleteProvider error', e);
+      toast({
+        title: "Error",
+        description: e.message || "Failed to delete ISP provider. Please try again.",
         variant: "destructive",
       });
     }
@@ -700,7 +806,28 @@ export default function ISPManagement() {
                   <CardTitle>Registered ISP Providers</CardTitle>
                   <CardDescription>Manage ISP provider registrations by city and area</CardDescription>
                 </div>
-                <Dialog open={providerDialogOpen} onOpenChange={setProviderDialogOpen}>
+                <Dialog open={providerDialogOpen} onOpenChange={(open) => {
+                  setProviderDialogOpen(open);
+                  if (!open) {
+                    setIsEditMode(false);
+                    setSelectedProvider(null);
+                    setProviderForm({
+                      provider_name: '',
+                      contact_person: '',
+                      contact_phone: '',
+                      email: '',
+                      city: '',
+                      area: '',
+                      operational_area: '',
+                      service_type: 'ISP',
+                      cost_50mbps: '',
+                      cost_100mbps: '',
+                      cost_150mbps: '',
+                      otc_charges: '',
+                      status: 'Active'
+                    });
+                  }
+                }}>
                   <DialogTrigger asChild>
                     <Button className="gap-2">
                       <Plus className="h-4 w-4" />
@@ -709,8 +836,8 @@ export default function ISPManagement() {
                   </DialogTrigger>
                   <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                      <DialogTitle>Register ISP Provider</DialogTitle>
-                      <DialogDescription>Add ISP provider details</DialogDescription>
+                      <DialogTitle>{isEditMode ? 'Edit ISP Provider' : 'Register ISP Provider'}</DialogTitle>
+                      <DialogDescription>{isEditMode ? 'Update ISP provider details' : 'Add ISP provider details'}</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -722,6 +849,61 @@ export default function ISPManagement() {
                             placeholder="Airtel, Jio, BSNL..."
                           />
                         </div>
+                        <div>
+                          <Label>POC Name</Label>
+                          <Input
+                            value={providerForm.contact_person}
+                            onChange={(e) => setProviderForm({ ...providerForm, contact_person: e.target.value })}
+                            placeholder="Contact person name"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label>Contact Number</Label>
+                          <Input
+                            value={providerForm.contact_phone}
+                            onChange={(e) => setProviderForm({ ...providerForm, contact_phone: e.target.value })}
+                            placeholder="9876543210"
+                          />
+                        </div>
+                        <div>
+                          <Label>Email</Label>
+                          <Input
+                            type="email"
+                            value={providerForm.email}
+                            onChange={(e) => setProviderForm({ ...providerForm, email: e.target.value })}
+                            placeholder="contact@isp.com"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <Label>Office Location</Label>
+                          <Input
+                            value={providerForm.city}
+                            onChange={(e) => setProviderForm({ ...providerForm, city: e.target.value })}
+                            placeholder="Bangalore"
+                          />
+                        </div>
+                        <div>
+                          <Label>Area</Label>
+                          <Input
+                            value={providerForm.area}
+                            onChange={(e) => setProviderForm({ ...providerForm, area: e.target.value })}
+                            placeholder="Karnataka"
+                          />
+                        </div>
+                        <div>
+                          <Label>Operational Area</Label>
+                          <Input
+                            value={providerForm.operational_area}
+                            onChange={(e) => setProviderForm({ ...providerForm, operational_area: e.target.value })}
+                            placeholder="Pan India"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
                         <div>
                           <Label>Service Type</Label>
                           <Select
@@ -738,71 +920,67 @@ export default function ISPManagement() {
                             </SelectContent>
                           </Select>
                         </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <Label>City</Label>
-                          <Input
-                            value={providerForm.city}
-                            onChange={(e) => setProviderForm({ ...providerForm, city: e.target.value })}
-                            placeholder="Bangalore"
-                          />
-                        </div>
-                        <div>
-                          <Label>Area</Label>
-                          <Input
-                            value={providerForm.area}
-                            onChange={(e) => setProviderForm({ ...providerForm, area: e.target.value })}
-                            placeholder="Koramangala, Whitefield..."
-                          />
+                          <Label>Status</Label>
+                          <Select
+                            value={providerForm.status}
+                            onValueChange={(value: 'Active' | 'Inactive') => setProviderForm({ ...providerForm, status: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Active">Active</SelectItem>
+                              <SelectItem value="Inactive">Inactive</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
-                      <div>
-                        <Label>Contact Person</Label>
-                        <Input
-                          value={providerForm.contact_person}
-                          onChange={(e) => setProviderForm({ ...providerForm, contact_person: e.target.value })}
-                          placeholder="Account manager name"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label>Contact Email</Label>
-                          <Input
-                            type="email"
-                            value={providerForm.contact_email}
-                            onChange={(e) => setProviderForm({ ...providerForm, contact_email: e.target.value })}
-                            placeholder="contact@isp.com"
-                          />
+                      <div className="border-t pt-4">
+                        <Label className="text-base font-semibold mb-3 block">Pricing (INR/Month)</Label>
+                        <div className="grid grid-cols-4 gap-4">
+                          <div>
+                            <Label className="text-sm">50 Mbps</Label>
+                            <Input
+                              type="number"
+                              value={providerForm.cost_50mbps}
+                              onChange={(e) => setProviderForm({ ...providerForm, cost_50mbps: e.target.value })}
+                              placeholder="1050"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-sm">100 Mbps</Label>
+                            <Input
+                              type="number"
+                              value={providerForm.cost_100mbps}
+                              onChange={(e) => setProviderForm({ ...providerForm, cost_100mbps: e.target.value })}
+                              placeholder="1200"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-sm">150 Mbps</Label>
+                            <Input
+                              type="number"
+                              value={providerForm.cost_150mbps}
+                              onChange={(e) => setProviderForm({ ...providerForm, cost_150mbps: e.target.value })}
+                              placeholder="884"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-sm">OTC Charges</Label>
+                            <Input
+                              type="number"
+                              value={providerForm.otc_charges}
+                              onChange={(e) => setProviderForm({ ...providerForm, otc_charges: e.target.value })}
+                              placeholder="1000"
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <Label>Contact Phone</Label>
-                          <Input
-                            value={providerForm.contact_phone}
-                            onChange={(e) => setProviderForm({ ...providerForm, contact_phone: e.target.value })}
-                            placeholder="+91 9876543210"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <Label>Status</Label>
-                        <Select
-                          value={providerForm.status}
-                          onValueChange={(value: 'Active' | 'Inactive') => setProviderForm({ ...providerForm, status: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Active">Active</SelectItem>
-                            <SelectItem value="Inactive">Inactive</SelectItem>
-                          </SelectContent>
-                        </Select>
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setProviderDialogOpen(false)}>Cancel</Button>
-                      <Button onClick={handleAddProvider}>Add Provider</Button>
+                      <Button onClick={handleAddProvider}>{isEditMode ? 'Update Provider' : 'Add Provider'}</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -817,11 +995,18 @@ export default function ISPManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Provider ID</TableHead>
                       <TableHead>Provider Name</TableHead>
+                      <TableHead>POC</TableHead>
+                      <TableHead>Contact Number</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Office Location</TableHead>
+                      <TableHead>Operational Area</TableHead>
                       <TableHead>Service Type</TableHead>
-                      <TableHead>City</TableHead>
-                      <TableHead>Area</TableHead>
-                      <TableHead>Contact</TableHead>
+                      <TableHead>50 Mbps</TableHead>
+                      <TableHead>100 Mbps</TableHead>
+                      <TableHead>150 Mbps</TableHead>
+                      <TableHead>OTC</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -829,19 +1014,31 @@ export default function ISPManagement() {
                   <TableBody>
                     {providers.map((provider) => (
                       <TableRow key={provider.id}>
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-xs">
+                            {provider.provider_id || provider.id.substring(0, 8).toUpperCase()}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="font-medium">{provider.provider_name}</TableCell>
+                        <TableCell>{provider.contact_person || '-'}</TableCell>
+                        <TableCell>{provider.contact_phone || '-'}</TableCell>
+                        <TableCell className="text-sm">{provider.email || provider.contact_email || '-'}</TableCell>
+                        <TableCell>{provider.city || '-'}</TableCell>
+                        <TableCell>{provider.operational_area || provider.area || '-'}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{provider.service_type}</Badge>
+                          <Badge variant="secondary" className="text-xs">{provider.service_type}</Badge>
                         </TableCell>
-                        <TableCell>
-                          <span className="font-medium text-blue-600">{provider.city}</span>
+                        <TableCell className="text-right">
+                          {provider.cost_50mbps ? `₹${provider.cost_50mbps}` : '-'}
                         </TableCell>
-                        <TableCell>{provider.area}</TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            <div>{provider.contact_person}</div>
-                            <div className="text-muted-foreground">{provider.contact_phone}</div>
-                          </div>
+                        <TableCell className="text-right">
+                          {provider.cost_100mbps ? `₹${provider.cost_100mbps}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {provider.cost_150mbps ? `₹${provider.cost_150mbps}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {provider.otc_charges ? `₹${provider.otc_charges}` : '-'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={provider.status === 'Active' ? 'default' : 'secondary'}>
@@ -849,10 +1046,26 @@ export default function ISPManagement() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button size="sm" variant="outline">
-                            <Edit className="h-3 w-3 mr-1" />
-                            Edit
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => handleEditProvider(provider)}
+                            >
+                              <Edit className="h-3 w-3 mr-1" />
+                              Edit
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="destructive"
+                              onClick={() => {
+                                setProviderToDelete(provider);
+                                setDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -862,6 +1075,42 @@ export default function ISPManagement() {
             </CardContent>
           </Card>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete ISP Provider</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this ISP provider? This action cannot be undone and will remove all associated connections.
+            </DialogDescription>
+          </DialogHeader>
+          {providerToDelete && (
+            <div className="py-4">
+              <div className="rounded-lg bg-muted p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="font-mono">
+                    {providerToDelete.provider_id || 'N/A'}
+                  </Badge>
+                  <div className="font-medium text-lg">{providerToDelete.provider_name}</div>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <div>Service Type: {providerToDelete.service_type}</div>
+                  {providerToDelete.city && <div>Location: {providerToDelete.city}</div>}
+                  {providerToDelete.contact_person && <div>Contact: {providerToDelete.contact_person}</div>}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteProvider}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Provider
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Connections View */}
       {activeView === 'connections' && (

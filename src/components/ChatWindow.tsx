@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, X, Send, Minimize2, Maximize2, Users, Paperclip, Image as ImageIcon, FileText, Bold, Italic, Link as LinkIcon, Download } from "lucide-react";
+import { MessageCircle, X, Send, Minimize2, Maximize2, Users, Paperclip, Image as ImageIcon, FileText, Bold, Italic, Link as LinkIcon, Download, Search } from "lucide-react";
 
 type Message = {
   id: string;
@@ -44,6 +44,7 @@ export default function ChatWindow() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [showFormatting, setShowFormatting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -388,7 +389,7 @@ export default function ChatWindow() {
 
   return (
     <div className="fixed bottom-6 right-6 z-50">
-      <Card className={`w-96 shadow-2xl ${isMinimized ? 'h-14' : 'h-[600px]'} flex flex-col`}>
+      <Card className={`w-[600px] shadow-2xl ${isMinimized ? 'h-14' : 'h-[450px]'} flex flex-col`}>
         <CardHeader className="p-4 border-b flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
             <MessageCircle className="h-5 w-5" />
@@ -430,9 +431,32 @@ export default function ChatWindow() {
           <CardContent className="p-0 flex-1 flex flex-col overflow-hidden">
             {!selectedUser ? (
               // Users List
-              <ScrollArea className="flex-1">
-                <div className="p-2">
-                  {users.filter(u => u.id !== currentUser?.id).map((user) => (
+              <>
+                <div className="p-3 border-b">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="Search users..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                </div>
+                <ScrollArea className="flex-1">
+                  <div className="p-2">
+                    {users
+                      .filter(u => u.id !== currentUser?.id)
+                      .filter(u => {
+                        const query = searchQuery.toLowerCase();
+                        return (
+                          u.full_name?.toLowerCase().includes(query) ||
+                          u.email?.toLowerCase().includes(query) ||
+                          u.department?.toLowerCase().includes(query)
+                        );
+                      })
+                      .map((user) => (
                     <div
                       key={user.id}
                       onClick={() => setSelectedUser(user)}
@@ -456,6 +480,7 @@ export default function ChatWindow() {
                   ))}
                 </div>
               </ScrollArea>
+              </>
             ) : (
               // Messages View
               <>
