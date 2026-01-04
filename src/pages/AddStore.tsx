@@ -28,7 +28,7 @@ type FormValues = {
   address: string;
   poc: string;
   pocNo: string;
-  siteReadiness: "Existing site" | "New site";
+  siteReadiness: "Existing site" | "New site" | "Canceled";
 };
 
 type StoreDetails = {
@@ -217,7 +217,7 @@ const AddStore: React.FC = () => {
         poc: data.poc,
         poc_no: data.pocNo,
         priority: data.priority as "High" | "Medium" | "Low",
-        site_readiness: data.siteReadiness as "Existing site" | "New site",
+        site_readiness: data.siteReadiness as "Existing site" | "New site" | "Canceled",
         has_floor_plan: false // Will be updated after upload if files are provided
       };
       
@@ -507,7 +507,7 @@ const AddStore: React.FC = () => {
         poc: data.poc,
         poc_no: data.pocNo,
         priority: data.priority as "High" | "Medium" | "Low",
-        site_readiness: data.siteReadiness as "Existing site" | "New site",
+        site_readiness: data.siteReadiness as "Existing site" | "New site" | "Canceled",
       };
       
       // Add floor plan data if files were uploaded
@@ -703,6 +703,7 @@ const AddStore: React.FC = () => {
                   <select {...register("siteReadiness")} className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                     <option>Existing site</option>
                     <option>New site</option>
+                    <option>Canceled</option>
                   </select>
                 </div>
 
@@ -951,6 +952,7 @@ const AddStore: React.FC = () => {
               <select {...register("siteReadiness")} className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                 <option>Existing site</option>
                 <option>New site</option>
+                <option>Canceled</option>
               </select>
             </div>
 

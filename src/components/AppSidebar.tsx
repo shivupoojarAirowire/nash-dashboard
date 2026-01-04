@@ -60,7 +60,8 @@ const catalogItems = [
   { title: "Add Store", url: "/add-store", icon: Store },
   { title: "HeatMaps", url: "/project-manager/load-site", icon: MapIcon },
   { title: "Device Configurations", url: "/project-manager/device-configurations", icon: Package },
-  { title: "Onboard Store", url: "/project-operations", icon: Settings }
+  { title: "Onboard Store", url: "/project-operations", icon: Settings },
+  { title: "Additional Assets", url: "/additional-assets", icon: Package }
     ]
   },
   {

@@ -24,6 +24,7 @@ import Documents from "./pages/Documents";
 import Vendors from "./pages/Vendors";
 import ISPManagement from "./pages/ISPManagement";
 import ProjectOperations from "./pages/ProjectOperations";
+import AdditionalAssets from "./pages/AdditionalAssets";
 import NetworkOperations from "./pages/NetworkOperations";
 import Reports from "./pages/Reports";
 import Auth from "./pages/Auth";
@@ -62,6 +63,7 @@ const App = () => (
             <Route path="/vendors" element={<Vendors />} />
             <Route path="/isp-management" element={<ISPManagement />} />
             <Route path="/project-operations" element={<ProjectOperations />} />
+            <Route path="/additional-assets" element={<AdditionalAssets />} />
             <Route path="/network-operations" element={<NetworkOperations />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/profile" element={<UserProfile />} />

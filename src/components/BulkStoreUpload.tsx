@@ -107,12 +107,14 @@ export function BulkStoreUpload() {
     try {
       const storesToAdd = uploadedStores.map(store => {
         // Map site_readiness values to valid constraint values
-        let siteReadiness: "Existing site" | "New site" = "Existing site";
+        let siteReadiness: "Existing site" | "New site" | "Canceled" = "Existing site";
         const value = (store.siteReadiness || "").trim().toLowerCase();
         
         // Map various input formats to valid values
         if (value.includes("new")) {
           siteReadiness = "New site";
+        } else if (value.includes("cancel")) {
+          siteReadiness = "Canceled";
         } else {
           siteReadiness = "Existing site";
         }
