@@ -50,13 +50,60 @@ export async function addStore(store: StoreInsert) {
 }
 
 export async function bulkAddStores(stores: StoreInsert[]) {
-  const { data, error } = await supabase
+  // Deduplicate stores by store_code (keep last occurrence)
+  const uniqueStores = Array.from(
+    new Map(stores.map(store => [store.store_code, store])).values()
+  );
+
+  // Get existing store codes to check for duplicates
+  const { data: existingStores, error: fetchError } = await supabase
     .from('stores')
-    .insert(stores)
-    .select();
-  
-  if (error) throw error;
-  return data;
+    .select('store_code')
+    .in('store_code', uniqueStores.map(s => s.store_code));
+
+  if (fetchError) throw fetchError;
+
+  // Separate stores into new and existing
+  const existingCodes = new Set(existingStores?.map(s => s.store_code) || []);
+  const newStores = uniqueStores.filter(store => !existingCodes.has(store.store_code));
+  const existingStoresData = uniqueStores.filter(store => existingCodes.has(store.store_code));
+
+  let allData = [];
+
+  // Insert new stores
+  if (newStores.length > 0) {
+    const { data: insertedData, error: insertError } = await supabase
+      .from('stores')
+      .insert(newStores)
+      .select();
+    
+    if (insertError) throw insertError;
+    allData = allData.concat(insertedData || []);
+  }
+
+  // Update existing stores
+  if (existingStoresData.length > 0) {
+    for (const store of existingStoresData) {
+      const { data: updatedData, error: updateError } = await supabase
+        .from('stores')
+        .update({
+          city: store.city,
+          store: store.store,
+          address: store.address,
+          poc: store.poc,
+          poc_no: store.poc_no,
+          priority: store.priority,
+          site_readiness: store.site_readiness
+        })
+        .eq('store_code', store.store_code)
+        .select();
+      
+      if (updateError) throw updateError;
+      allData = allData.concat(updatedData || []);
+    }
+  }
+
+  return allData;
 }
 
 export async function updateStore(id: string, store: StoreUpdate) {

@@ -481,7 +481,7 @@ export default function Auth() {
                     />
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Check your email for the 6-digit code
+                    A login link has been sent to your email. Please check your email and login from there.
                   </p>
                   <Button
                     type="button"
