@@ -20,6 +20,42 @@ interface TrackingResponse {
   error?: string;
 }
 
+// Convert DD-MM-YYYY HH:MM format to YYYY-MM-DD format
+function convertDateFormat(dateString: string): string | null {
+  if (!dateString) return null;
+  
+  try {
+    // Handle format like "14-11-2025 19:00" or "14-11-2025"
+    const parts = dateString.trim().split(" ");
+    const datePart = parts[0]; // "14-11-2025"
+    
+    if (!datePart || datePart.split("-").length !== 3) {
+      console.warn(`Invalid date format: ${dateString}`);
+      return null;
+    }
+    
+    const [day, month, year] = datePart.split("-");
+    
+    // Validate the values
+    const dayNum = parseInt(day, 10);
+    const monthNum = parseInt(month, 10);
+    const yearNum = parseInt(year, 10);
+    
+    if (isNaN(dayNum) || isNaN(monthNum) || isNaN(yearNum)) {
+      console.warn(`Invalid date parts: day=${day}, month=${month}, year=${year}`);
+      return null;
+    }
+    
+    // Format as YYYY-MM-DD
+    const isoDate = `${String(yearNum).padStart(4, "0")}-${String(monthNum).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
+    console.log(`Converted date from ${dateString} to ${isoDate}`);
+    return isoDate;
+  } catch (error) {
+    console.error(`Error converting date ${dateString}:`, error);
+    return null;
+  }
+}
+
 serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -125,7 +161,8 @@ serve(async (req: Request) => {
         if (docketDetails.DeliveredDate) {
           latestStatus = 'Delivered';
           latestRemarks = `Delivered on ${docketDetails.DeliveredDate}`;
-          deliveredDate = docketDetails.DeliveredDate;
+          // Convert date format from DD-MM-YYYY to YYYY-MM-DD
+          deliveredDate = convertDateFormat(docketDetails.DeliveredDate);
           podUrl = docketDetails.pod_url || null;
           if (docketDetails.ReceivedBy) {
             latestRemarks += ` | Received by: ${docketDetails.ReceivedBy}`;

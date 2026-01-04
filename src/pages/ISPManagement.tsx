@@ -103,6 +103,11 @@ export default function ISPManagement() {
   const [selectedProvider, setSelectedProvider] = useState<ISPProvider | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<ISPProvider | null>(null);
+  const [storeISPDialogOpen, setStoreISPDialogOpen] = useState(false);
+  const [isEditingStoreISP, setIsEditingStoreISP] = useState(false);
+  const [selectedStoreISP, setSelectedStoreISP] = useState<StoreISPDetail | null>(null);
+  const [deleteStoreISPDialogOpen, setDeleteStoreISPDialogOpen] = useState(false);
+  const [storeISPToDelete, setStoreISPToDelete] = useState<StoreISPDetail | null>(null);
   const [activeView, setActiveView] = useState<'providers' | 'connections' | 'overview' | 'store-isp' | 'tasks'>('providers');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -134,6 +139,18 @@ export default function ISPManagement() {
     provisioned_date: '',
     status: 'Active' as 'Active' | 'Inactive' | 'Pending',
     billing_cycle: 'Monthly'
+  });
+
+  const [storeISPForm, setStoreISPForm] = useState({
+    store_code: '',
+    isp1_status: 'Pending',
+    isp1_provider: '',
+    isp1_circuit_id: '',
+    isp1_delivery_date: '',
+    isp2_status: 'Pending',
+    isp2_provider: '',
+    isp2_circuit_id: '',
+    isp2_delivery_date: ''
   });
 
   useEffect(() => {
@@ -413,9 +430,18 @@ export default function ISPManagement() {
 
       console.log('Uploading ISP details:', ispDetails);
       
+      // Deduplicate by store_code - keep the last occurrence of each store_code
+      const deduplicatedDetails = Array.from(
+        new Map(
+          ispDetails.map((item) => [item.store_code, item])
+        ).values()
+      );
+
+      console.log(`Deduplicated from ${ispDetails.length} to ${deduplicatedDetails.length} records`);
+      
       const { data, error } = await supabase
         .from('store_isp_details')
-        .upsert(ispDetails, { onConflict: 'store_code' })
+        .upsert(deduplicatedDetails, { onConflict: 'store_code' })
         .select();
 
       if (error) {
@@ -427,7 +453,7 @@ export default function ISPManagement() {
 
       toast({
         title: "Success",
-        description: `${ispDetails.length} store ISP records uploaded successfully.`,
+        description: `${deduplicatedDetails.length} store ISP records uploaded successfully.`,
       });
 
       await loadStoreISPDetails();
@@ -573,6 +599,97 @@ export default function ISPManagement() {
       toast({
         title: "Error",
         description: e.message || "Failed to delete ISP provider. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditStoreISP = (item: StoreISPDetail) => {
+    setSelectedStoreISP(item);
+    setIsEditingStoreISP(true);
+    setStoreISPForm({
+      store_code: item.store_code,
+      isp1_status: item.isp1_status,
+      isp1_provider: item.isp1_provider || '',
+      isp1_circuit_id: item.isp1_circuit_id || '',
+      isp1_delivery_date: item.isp1_delivery_date ? item.isp1_delivery_date.split('T')[0] : '',
+      isp2_status: item.isp2_status,
+      isp2_provider: item.isp2_provider || '',
+      isp2_circuit_id: item.isp2_circuit_id || '',
+      isp2_delivery_date: item.isp2_delivery_date ? item.isp2_delivery_date.split('T')[0] : ''
+    });
+    setStoreISPDialogOpen(true);
+  };
+
+  const handleSaveStoreISP = async () => {
+    try {
+      if (!storeISPForm.store_code) {
+        toast({
+          title: "Error",
+          description: "Store code is required",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const updateData = {
+        ...storeISPForm,
+        isp1_delivery_date: storeISPForm.isp1_delivery_date || null,
+        isp2_delivery_date: storeISPForm.isp2_delivery_date || null
+      };
+
+      if (isEditingStoreISP && selectedStoreISP) {
+        const { error } = await supabase
+          .from('store_isp_details')
+          .update(updateData)
+          .eq('id', selectedStoreISP.id);
+
+        if (error) throw error;
+
+        toast({
+          title: "Success",
+          description: "Store ISP details updated successfully.",
+        });
+      }
+
+      setStoreISPDialogOpen(false);
+      setIsEditingStoreISP(false);
+      setSelectedStoreISP(null);
+      loadStoreISPDetails();
+    } catch (e: any) {
+      console.error('handleSaveStoreISP error', e);
+      toast({
+        title: "Error",
+        description: e.message || "Failed to save store ISP details.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteStoreISP = async () => {
+    if (!storeISPToDelete) return;
+
+    try {
+      const { error } = await supabase
+        .from('store_isp_details')
+        .delete()
+        .eq('id', storeISPToDelete.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Store ISP details deleted successfully.",
+      });
+
+      setDeleteStoreISPDialogOpen(false);
+      setStoreISPToDelete(null);
+      loadStoreISPDetails();
+    } catch (e: any) {
+      console.error('handleDeleteStoreISP error', e);
+      toast({
+        title: "Error",
+        description: e.message || "Failed to delete store ISP details.",
         variant: "destructive",
       });
     }
@@ -1476,6 +1593,7 @@ export default function ISPManagement() {
                       <TableHead>ISP 2 PROVIDER</TableHead>
                       <TableHead>ISP 2 CIRCUIT ID</TableHead>
                       <TableHead>ISP 2 DELIVERY DATE</TableHead>
+                      <TableHead>ACTIONS</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1500,6 +1618,27 @@ export default function ISPManagement() {
                         <TableCell>{item.isp2_provider || '-'}</TableCell>
                         <TableCell className="font-mono text-sm">{item.isp2_circuit_id || '-'}</TableCell>
                         <TableCell>{item.isp2_delivery_date ? new Date(item.isp2_delivery_date).toLocaleDateString() : '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditStoreISP(item)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setStoreISPToDelete(item);
+                                setDeleteStoreISPDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1508,6 +1647,211 @@ export default function ISPManagement() {
             </CardContent>
           </Card>
       )}
+
+      {/* Store ISP Edit Dialog */}
+      <Dialog open={storeISPDialogOpen} onOpenChange={setStoreISPDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {isEditingStoreISP ? 'Edit' : 'Add'} Store ISP Details
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="store_code">Store Code *</Label>
+                <Input
+                  id="store_code"
+                  value={storeISPForm.store_code}
+                  onChange={(e) =>
+                    setStoreISPForm({ ...storeISPForm, store_code: e.target.value })
+                  }
+                  placeholder="e.g., STR-001"
+                  disabled={isEditingStoreISP}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="font-semibold text-base mb-3">ISP 1 Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="isp1_status">Status</Label>
+                  <Select
+                    value={storeISPForm.isp1_status || ''}
+                    onValueChange={(value) =>
+                      setStoreISPForm({ ...storeISPForm, isp1_status: value })
+                    }
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Delivered">Delivered</SelectItem>
+                      <SelectItem value="Delivered by Zepto">Delivered by Zepto</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="isp1_provider">Provider</Label>
+                  <Input
+                    id="isp1_provider"
+                    value={storeISPForm.isp1_provider || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp1_provider: e.target.value })
+                    }
+                    placeholder="e.g., Airtel"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="isp1_circuit_id">Circuit ID</Label>
+                  <Input
+                    id="isp1_circuit_id"
+                    value={storeISPForm.isp1_circuit_id || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp1_circuit_id: e.target.value })
+                    }
+                    placeholder="e.g., CIR-12345"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="isp1_delivery_date">Delivery Date</Label>
+                  <Input
+                    id="isp1_delivery_date"
+                    type="date"
+                    value={storeISPForm.isp1_delivery_date || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp1_delivery_date: e.target.value })
+                    }
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="font-semibold text-base mb-3">ISP 2 Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="isp2_status">Status</Label>
+                  <Select
+                    value={storeISPForm.isp2_status || ''}
+                    onValueChange={(value) =>
+                      setStoreISPForm({ ...storeISPForm, isp2_status: value })
+                    }
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Delivered">Delivered</SelectItem>
+                      <SelectItem value="Delivered by Zepto">Delivered by Zepto</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="isp2_provider">Provider</Label>
+                  <Input
+                    id="isp2_provider"
+                    value={storeISPForm.isp2_provider || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp2_provider: e.target.value })
+                    }
+                    placeholder="e.g., Jio"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="isp2_circuit_id">Circuit ID</Label>
+                  <Input
+                    id="isp2_circuit_id"
+                    value={storeISPForm.isp2_circuit_id || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp2_circuit_id: e.target.value })
+                    }
+                    placeholder="e.g., CIR-67890"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="isp2_delivery_date">Delivery Date</Label>
+                  <Input
+                    id="isp2_delivery_date"
+                    type="date"
+                    value={storeISPForm.isp2_delivery_date || ''}
+                    onChange={(e) =>
+                      setStoreISPForm({ ...storeISPForm, isp2_delivery_date: e.target.value })
+                    }
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setStoreISPDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveStoreISP}>
+              {isEditingStoreISP ? 'Update' : 'Add'} Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Store ISP Delete Confirmation Dialog */}
+      <Dialog open={deleteStoreISPDialogOpen} onOpenChange={setDeleteStoreISPDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Store ISP Details</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete ISP details for this store? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {storeISPToDelete && (
+            <div className="py-4">
+              <div className="rounded-lg bg-muted p-4 space-y-3">
+                <div className="font-medium text-lg">{storeISPToDelete.store_code}</div>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <div>
+                    <span className="font-semibold text-foreground">ISP 1:</span> {storeISPToDelete.isp1_provider || '-'} ({storeISPToDelete.isp1_status})
+                  </div>
+                  {storeISPToDelete.isp1_circuit_id && (
+                    <div>Circuit ID: {storeISPToDelete.isp1_circuit_id}</div>
+                  )}
+                  <div>
+                    <span className="font-semibold text-foreground">ISP 2:</span> {storeISPToDelete.isp2_provider || '-'} ({storeISPToDelete.isp2_status})
+                  </div>
+                  {storeISPToDelete.isp2_circuit_id && (
+                    <div>Circuit ID: {storeISPToDelete.isp2_circuit_id}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteStoreISPDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteStoreISP}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Tasks View */}
       {activeView === 'tasks' && (
