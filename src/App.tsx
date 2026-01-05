@@ -22,9 +22,11 @@ import ProjectManagementDashboard from "./pages/ProjectManagementDashboard";
 import Users from "./pages/Users";
 import Documents from "./pages/Documents";
 import Vendors from "./pages/Vendors";
+import VendorsOverview from "./pages/VendorsOverview.tsx";
+import VendorBoard from "./pages/VendorBoard.tsx";
 import ISPManagement from "./pages/ISPManagement";
 import ProjectOperations from "./pages/ProjectOperations";
-import AdditionalAssets from "./pages/AdditionalAssets";
+import AdditionalAssets from "./pages/AdditionalAssets.tsx";
 import NetworkOperations from "./pages/NetworkOperations";
 import Reports from "./pages/Reports";
 import Auth from "./pages/Auth";
@@ -60,7 +62,9 @@ const App = () => (
             <Route path="/engineering/device-configurations" element={<EngineerDeviceConfigurations />} />
             <Route path="/users" element={<Users />} />
             <Route path="/documents" element={<Documents />} />
+            <Route path="/vendors/overview" element={<VendorsOverview />} />
             <Route path="/vendors" element={<Vendors />} />
+            <Route path="/vendors/board" element={<VendorBoard />} />
             <Route path="/isp-management" element={<ISPManagement />} />
             <Route path="/project-operations" element={<ProjectOperations />} />
             <Route path="/additional-assets" element={<AdditionalAssets />} />

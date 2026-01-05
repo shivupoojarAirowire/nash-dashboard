@@ -34,6 +34,8 @@ export default function LoadSite() {
   const [cities, setCities] = useState<string[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [filteredStores, setFilteredStores] = useState<Store[]>([]);
+  const [storeSearchQuery, setStoreSearchQuery] = useState<string>("");
+  const [showStoreSuggestions, setShowStoreSuggestions] = useState<boolean>(false);
   const [engineeringUsers, setEngineeringUsers] = useState<User[]>([]);
   
   const [selectedCity, setSelectedCity] = useState("");
@@ -112,6 +114,7 @@ export default function LoadSite() {
       setFilteredStores(cityStores);
       setSelectedStore("");
       setSelectedStoreCode("");
+      setStoreSearchQuery("");
     }
   }, [selectedCity, stores]);
 
@@ -120,6 +123,7 @@ export default function LoadSite() {
       const store = filteredStores.find(s => s.id === selectedStore);
       if (store) {
         setSelectedStoreCode(store.store_code);
+        setStoreSearchQuery(store.store);
       }
     }
   }, [selectedStore, filteredStores]);
@@ -685,22 +689,53 @@ export default function LoadSite() {
 
               <div className="space-y-2">
                 <Label htmlFor="store" className="text-xs">Site/Store *</Label>
-                <Select 
-                  value={selectedStore} 
-                  onValueChange={setSelectedStore}
-                  disabled={!selectedCity}
-                >
-                  <SelectTrigger id="store" className="h-9">
-                    <SelectValue placeholder={selectedCity ? "Select site" : "Select city first"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredStores.map((store) => (
-                      <SelectItem key={store.id} value={store.id}>
-                        {store.store}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Input
+                    id="store"
+                    placeholder={selectedCity ? "Search or select site" : "Select city first"}
+                    value={storeSearchQuery}
+                    disabled={!selectedCity}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setStoreSearchQuery(val);
+                      setShowStoreSuggestions(true);
+                    }}
+                    onFocus={() => setShowStoreSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowStoreSuggestions(false), 200)}
+                    className="h-9 text-sm"
+                    autoComplete="off"
+                  />
+                  {showStoreSuggestions && selectedCity && (
+                    <div className="absolute z-[90] w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-52 overflow-y-auto text-sm">
+                      {(() => {
+                        const searchLower = storeSearchQuery.toLowerCase();
+                        const baseList = selectedCity ? filteredStores : stores;
+                        const filtered = baseList.filter((s) =>
+                          s.store.toLowerCase().includes(searchLower) || s.store_code.toLowerCase().includes(searchLower)
+                        );
+                        if (filtered.length === 0) {
+                          return <div className="px-3 py-2 text-muted-foreground">No matches</div>;
+                        }
+                        return filtered.map((store) => (
+                          <button
+                            key={store.id}
+                            type="button"
+                            className="w-full px-3 py-2 text-left hover:bg-blue-50 dark:hover:bg-gray-700 border-b last:border-0 border-gray-100 dark:border-gray-700"
+                            onClick={() => {
+                              setSelectedStore(store.id);
+                              setSelectedStoreCode(store.store_code);
+                              setStoreSearchQuery(store.store);
+                              setShowStoreSuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{store.store}</div>
+                            <div className="text-xs text-muted-foreground">{store.store_code}</div>
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

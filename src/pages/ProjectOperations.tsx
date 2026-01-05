@@ -30,9 +30,13 @@ interface EligibleStore {
 }
 
 interface Vendor {
-  id: string;
-  vendor_name: string;
-  vendor_code: string;
+  id: string;           // UUID primary key
+  vendor_id: string;    // Human-readable code like VEN-XXXX
+  company: string;
+  name: string;
+  city?: string;
+  operational_area?: string;
+  service_type?: string;
 }
 
 interface VendorAssignment {
@@ -207,8 +211,9 @@ const ProjectOperations = () => {
       console.log('Loading vendors...');
       const { data, error } = await supabase
         .from('vendors')
-        .select('id, vendor_name, vendor_code')
-        .order('vendor_name');
+        .select('id, vendor_id, company, name, city, operational_area, service_type')
+        .eq('status', 'Active')
+        .order('company');
 
       console.log('Vendors query result:', { data, error });
 
@@ -236,7 +241,10 @@ const ProjectOperations = () => {
     }
 
     try {
-      const { error } = await supabase
+      const selectedStoreInfo = eligibleStores.find((s) => s.store_code === selectedStore);
+
+      // Assign vendor to site_onboarding
+      const { error: onboardingError } = await supabase
         .from('site_onboarding')
         .insert({
           store_code: selectedStore,
@@ -246,7 +254,24 @@ const ProjectOperations = () => {
           notes: assignmentForm.notes || null
         });
 
-      if (error) throw error;
+      if (onboardingError) throw onboardingError;
+
+      // Create vendor task entry for Vendor Tasks dashboard
+      const { error: taskError } = await supabase
+        .from('vendor_tasks')
+        .insert({
+          vendor_id: assignmentForm.vendor_id,
+          store_code: selectedStore,
+          store_name: selectedStoreInfo?.store_name || selectedStore,
+          devices: 0,
+          task_type: 'Onboarding',
+          status: assignmentForm.deployment_status || 'Pending',
+          assigned_date: new Date().toISOString(),
+          notes: assignmentForm.notes || null,
+          payment_status: 'Pending'
+        });
+
+      if (taskError) throw taskError;
 
       toast({
         title: "Success",
@@ -400,7 +425,7 @@ const ProjectOperations = () => {
                                       <SelectContent>
                                         {vendors.map((vendor) => (
                                           <SelectItem key={vendor.id} value={vendor.id}>
-                                            {vendor.vendor_name} ({vendor.vendor_code})
+                                            {vendor.company} - {vendor.name} ({vendor.vendor_id})
                                           </SelectItem>
                                         ))}
                                       </SelectContent>

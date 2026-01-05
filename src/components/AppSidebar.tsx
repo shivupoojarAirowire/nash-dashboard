@@ -74,7 +74,16 @@ const catalogItems = [
     ]
   },
   { title: "Documents", url: "/documents", icon: FileText },
-  { title: "Vendors", url: "/vendors", icon: Truck },
+  { 
+    title: "Vendors", 
+    url: "/vendors/overview", 
+    icon: Truck,
+    subItems: [
+      { title: "Overview", url: "/vendors/overview", icon: Truck },
+      { title: "Vendor Management", url: "/vendors", icon: Truck },
+      { title: "Vendor Board", url: "/vendors/board", icon: Truck }
+    ]
+  },
   { title: "ISP Management", url: "/isp-management", icon: Wifi },
   { title: "Network Operations", url: "/network-operations", icon: Network },
   { title: "Reports", url: "/reports", icon: BarChart3 },
